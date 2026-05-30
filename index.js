@@ -1,5 +1,6 @@
 require('dotenv').config();
 const path = require('path');
+const express = require('express');
 const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
 const {
   Client,
@@ -1274,6 +1275,26 @@ const STAFF_ROLE_IDS = [
 const NEWS_PROTOCOLS_CH_ID = '1476978704243495003';
 const ENV_CATEGORY_ID = '1469241557118095391';
 let ENV_CH_ID = null;
+
+// ── Sweep Alerts ──
+const SWEEP_WEBHOOK_SECRET = process.env.SWEEP_SECRET || 'tsmp_sweep_secret';
+let SWEEP_ROLE_ID = null;       // set by /setup-sweep-alerts
+let SWEEP_ALERT_CH_ID = null;   // #〢sweep-alerts
+let SWEEP_ROLES_CH_ID = null;   // #〢alert-roles (button to self-assign)
+
+const LEVEL_LABELS = {
+  PDH: 'Previous Day High', PDL: 'Previous Day Low',
+  PWH: 'Previous Week High', PWL: 'Previous Week Low',
+  WO: 'Weekly Open', MO: 'Midnight Open',
+  PMH: 'Pre-Market High', PML: 'Pre-Market Low',
+  LDN_H: 'London High', LDN_L: 'London Low',
+  NYAM_H: 'NY AM High', NYAM_L: 'NY AM Low',
+  LUNCH_H: 'Lunch High', LUNCH_L: 'Lunch Low',
+  NYPM_H: 'NY PM High', NYPM_L: 'NY PM Low',
+  ASIA_H: 'Asia High', ASIA_L: 'Asia Low',
+  EQH: 'Equal Highs', EQL: 'Equal Lows',
+  IBH: 'Initial Balance High', IBL: 'Initial Balance Low',
+};
 let ENV_ENGINE_CH_ID = null;
 
 const FF_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
@@ -1675,6 +1696,91 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
+      if (commandName === 'setup-sweep-alerts') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        // Create Sweep Alerts role if not exists
+        let sweepRole = guild.roles.cache.find(r => r.name === '🔔 Sweep Alerts');
+        if (!sweepRole) {
+          sweepRole = await guild.roles.create({ name: '🔔 Sweep Alerts', color: 0x22d3ee, mentionable: true, reason: 'Sweep Alerts system' });
+        }
+        SWEEP_ROLE_ID = sweepRole.id;
+
+        const everyoneRole = guild.roles.everyone;
+
+        // Create ALERTS category if not exists
+        let alertCat = guild.channels.cache.find(c => c.type === 4 && c.name === '〢 ALERTS');
+        if (!alertCat) {
+          alertCat = await guild.channels.create({
+            name: '〢 ALERTS', type: 4,
+            permissionOverwrites: [{ id: everyoneRole.id, deny: ['ViewChannel'] }],
+          });
+        }
+
+        // Create #〢alert-roles channel (everyone can see, for self-assign button)
+        let rolesAlertCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
+        if (!rolesAlertCh) {
+          rolesAlertCh = await guild.channels.create({
+            name: '🔔〢alert-roles', type: 0, parent: alertCat.id,
+            permissionOverwrites: [
+              { id: everyoneRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
+              { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+              { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+            ],
+          });
+        }
+        SWEEP_ROLES_CH_ID = rolesAlertCh.id;
+
+        // Create #〢sweep-alerts channel (only Sweep Alerts role can see)
+        let alertCh = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts');
+        if (!alertCh) {
+          alertCh = await guild.channels.create({
+            name: '📡〢sweep-alerts', type: 0, parent: alertCat.id,
+            permissionOverwrites: [
+              { id: everyoneRole.id, deny: ['ViewChannel'] },
+              { id: sweepRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
+              { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+              { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+            ],
+          });
+        }
+        SWEEP_ALERT_CH_ID = alertCh.id;
+
+        // Post self-assign button in #〢alert-roles
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('sweep_role_toggle').setLabel('🔔  Get Sweep Alerts').setStyle(ButtonStyle.Secondary),
+        );
+        const embed = new EmbedBuilder()
+          .setColor(0x22d3ee)
+          .setTitle('🔔  NQ Sweep Alerts')
+          .setDescription(
+            `**Get notified when key NQ levels are swept.**\n\n` +
+            `Tracked levels:\n` +
+            `› PDH / PDL — Previous Day High & Low\n` +
+            `› PWH / PWL — Previous Week High & Low\n` +
+            `› Pre-Market High & Low (07:00–09:30 ET)\n` +
+            `› London High & Low (02:00–05:00 ET)\n` +
+            `› NY AM High & Low (09:30–11:00 ET)\n` +
+            `› Lunch High & Low (11:30–13:30 ET)\n` +
+            `› NY PM High & Low (13:30–16:00 ET)\n` +
+            `› Asia High & Low (20:00–00:00 ET)\n` +
+            `› Weekly Open · Midnight Open\n` +
+            `› Equal Highs / Equal Lows · Initial Balance H/L\n\n` +
+            `Click below to toggle the role on/off.`
+          )
+          .setFooter({ text: 'The Smart Money Paradigm  ·  Alerts powered by TradingView' });
+
+        await rolesAlertCh.send({ embeds: [embed], components: [row] });
+
+        const webhookUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'your-railway-url.up.railway.app'}/sweep`;
+        return interaction.editReply({
+          content: `Done!\n\n**Role:** <@&${sweepRole.id}>\n**Alert channel:** <#${alertCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>\n\n**TradingView webhook URL:**\n\`${webhookUrl}\`\n\n**Webhook secret** (set in Railway Variables as \`SWEEP_SECRET\`):\n\`${SWEEP_WEBHOOK_SECRET}\``,
+        });
+      }
+
       if (commandName === 'clear-welcome') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -1876,7 +1982,25 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
       const { guild, member, customId } = interaction;
 
-      // ── Roadmap question ──
+      // ── Sweep role toggle ──
+      if (customId === 'sweep_role_toggle') {
+        await interaction.deferReply({ ephemeral: true });
+        if (!SWEEP_ROLE_ID) {
+          const r = interaction.guild.roles.cache.find(r => r.name === '🔔 Sweep Alerts');
+          if (r) SWEEP_ROLE_ID = r.id;
+        }
+        if (!SWEEP_ROLE_ID) return interaction.editReply({ content: 'Sweep Alerts role not found. Ask staff to run `/setup-sweep-alerts`.' });
+        const member = interaction.member;
+        const has = member.roles.cache.has(SWEEP_ROLE_ID);
+        if (has) {
+          await member.roles.remove(SWEEP_ROLE_ID);
+          return interaction.editReply({ content: '🔕 Removed — you will no longer receive sweep alerts.' });
+        } else {
+          await member.roles.add(SWEEP_ROLE_ID);
+          return interaction.editReply({ content: '🔔 Added — you will now be pinged when key NQ levels are swept.' });
+        }
+      }
+
       // ── Env day button ──
       if (customId.startsWith('envday_')) {
         await interaction.deferReply({ ephemeral: true });
@@ -2132,8 +2256,74 @@ client.once(Events.ClientReady, () => {
     if (cal) { ENV_CH_ID = cal.id; console.log('economic-calendar channel found:', ENV_CH_ID); }
     const eng = guild.channels.cache.find(c => c.name === '🧠〢environment-selection' && c.parentId === ENV_CATEGORY_ID);
     if (eng) { ENV_ENGINE_CH_ID = eng.id; console.log('environment-selection channel found:', ENV_ENGINE_CH_ID); }
+    const sweepRole = guild.roles.cache.find(r => r.name === '🔔 Sweep Alerts');
+    if (sweepRole) { SWEEP_ROLE_ID = sweepRole.id; console.log('Sweep Alerts role found:', SWEEP_ROLE_ID); }
+    const sweepCh = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts');
+    if (sweepCh) { SWEEP_ALERT_CH_ID = sweepCh.id; console.log('sweep-alerts channel found:', SWEEP_ALERT_CH_ID); }
+    const sweepRolesCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
+    if (sweepRolesCh) { SWEEP_ROLES_CH_ID = sweepRolesCh.id; }
   }
 
 });
+
+// ── Express webhook server for TradingView sweep alerts ──
+const app = express();
+app.use(express.json());
+
+app.post('/sweep', async (req, res) => {
+  try {
+    const { level, direction, price, secret, ticker } = req.body;
+
+    if (secret !== SWEEP_WEBHOOK_SECRET) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    if (!level || !direction) {
+      return res.status(400).json({ error: 'missing level or direction' });
+    }
+    if (!SWEEP_ALERT_CH_ID || !SWEEP_ROLE_ID) {
+      return res.status(503).json({ error: 'sweep alerts not configured — run /setup-sweep-alerts' });
+    }
+
+    const guild = client.guilds.cache.first();
+    if (!guild) return res.status(503).json({ error: 'bot not ready' });
+    const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
+    if (!ch) return res.status(503).json({ error: 'alert channel not found' });
+
+    const labelName = LEVEL_LABELS[level.toUpperCase()] || level.toUpperCase();
+    const isAbove = direction === 'broken_above' || direction === 'swept_above' || direction === 'above';
+    const dirLabel = isAbove ? '🔺 SWEPT ABOVE' : '🔻 SWEPT BELOW';
+    const dirColor = isAbove ? 0x22d3ee : 0xf87171;
+    const sym = ticker || 'NQ';
+    const priceStr = price ? `**${parseFloat(price).toFixed(2)}**` : '—';
+
+    const nyTime = new Date().toLocaleTimeString('en-US', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: true, timeZone: 'America/New_York'
+    });
+
+    const embed = new EmbedBuilder()
+      .setColor(dirColor)
+      .setTitle(`${dirLabel}  ·  ${labelName}`)
+      .setDescription(
+        `**${sym}** swept through the **${labelName}**\n\n` +
+        `Price: ${priceStr}\n` +
+        `Direction: ${isAbove ? 'Above — potential liquidity grab above' : 'Below — potential liquidity grab below'}\n` +
+        `Time: \`${nyTime} ET\``
+      )
+      .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert' })
+      .setTimestamp();
+
+    await ch.send({ content: `<@&${SWEEP_ROLE_ID}>`, embeds: [embed] });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Sweep webhook error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/health', (_, res) => res.json({ ok: true, bot: client.user?.tag || 'starting' }));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Webhook server listening on port ${PORT}`));
 
 client.login(process.env.TOKEN);

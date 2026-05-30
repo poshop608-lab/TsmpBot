@@ -11,6 +11,7 @@
     "@fontsource/plus-jakarta-sans": "^5.2.8",
     "@napi-rs/canvas": "^1.0.0",
     "discord.js": "^14.14.1",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1"
   }
 }

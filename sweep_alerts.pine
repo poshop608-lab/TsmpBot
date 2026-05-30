@@ -1,0 +1,128 @@
+// © The Smart Money Paradigm — NQ Sweep Alerts
+// Paste this into TradingView Pine Editor on NQ1! (1-min chart recommended)
+// Set your webhook URL and secret in the variables below, then Add to Chart + Enable Alerts
+
+//@version=5
+indicator("TSMP Sweep Alerts", overlay=true, max_lines_count=50, max_labels_count=50)
+
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+webhook_url = "https://YOUR-RAILWAY-URL.up.railway.app/sweep"
+secret      = "tsmp_sweep_secret"   // must match SWEEP_SECRET in Railway env vars
+ticker_sym  = syminfo.ticker         // auto-detects NQ1! etc
+
+// ─── SESSION TIMES (New York) ─────────────────────────────────────────────────
+t_asia_start  = "2000-0000"
+t_london      = "0200-0500"
+t_premarket   = "0700-0930"
+t_nyam        = "0930-1100"
+t_lunch       = "1130-1330"
+t_nypm        = "1330-1600"
+
+inSession(t) => not na(time("1", t, "America/New_York"))
+
+// ─── LEVEL TRACKING ───────────────────────────────────────────────────────────
+// Previous Day High/Low
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
+
+// Previous Week High/Low
+pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+pwl = request.security(syminfo.tickerid, "W", low[1],  lookahead=barmerge.lookahead_on)
+
+// Weekly Open / Midnight Open
+wo  = request.security(syminfo.tickerid, "W", open,    lookahead=barmerge.lookahead_on)
+mo  = request.security(syminfo.tickerid, "D", open,    lookahead=barmerge.lookahead_on)
+
+// Session High/Low tracking (rolling within each session)
+var float asia_h = na,   var float asia_l = na
+var float ldn_h  = na,   var float ldn_l  = na
+var float pm_h   = na,   var float pm_l   = na
+var float nyam_h = na,   var float nyam_l = na
+var float lunch_h = na,  var float lunch_l = na
+var float nypm_h  = na,  var float nypm_l  = na
+
+// Reset and build each session's range
+newDay = ta.change(time("D")) != 0
+
+if newDay
+    asia_h := na, asia_l := na
+    ldn_h  := na, ldn_l  := na
+    pm_h   := na, pm_l   := na
+    nyam_h := na, nyam_l := na
+    lunch_h := na, lunch_l := na
+    nypm_h  := na, nypm_l  := na
+
+if inSession(t_asia_start)
+    asia_h := na(asia_h) ? high : math.max(asia_h, high)
+    asia_l := na(asia_l) ? low  : math.min(asia_l, low)
+
+if inSession(t_london)
+    ldn_h := na(ldn_h) ? high : math.max(ldn_h, high)
+    ldn_l := na(ldn_l) ? low  : math.min(ldn_l, low)
+
+if inSession(t_premarket)
+    pm_h := na(pm_h) ? high : math.max(pm_h, high)
+    pm_l := na(pm_l) ? low  : math.min(pm_l, low)
+
+if inSession(t_nyam)
+    nyam_h := na(nyam_h) ? high : math.max(nyam_h, high)
+    nyam_l := na(nyam_l) ? low  : math.min(nyam_l, low)
+
+if inSession(t_lunch)
+    lunch_h := na(lunch_h) ? high : math.max(lunch_h, high)
+    lunch_l := na(lunch_l) ? low  : math.min(lunch_l, low)
+
+if inSession(t_nypm)
+    nypm_h := na(nypm_h) ? high : math.max(nypm_h, high)
+    nypm_l := na(nypm_l) ? low  : math.min(nypm_l, low)
+
+// ─── SWEEP DETECTION ──────────────────────────────────────────────────────────
+// A sweep = price wicks above/below the level but closes back (or just crosses)
+// Using crossover/crossunder on close for simplicity — works for most sweeps
+
+sweepAbove(lvl) => not na(lvl) and ta.crossover(close, lvl)
+sweepBelow(lvl) => not na(lvl) and ta.crossunder(close, lvl)
+
+// ─── WEBHOOK PAYLOAD BUILDER ─────────────────────────────────────────────────
+buildPayload(lvl, dir) =>
+    '{"level":"' + lvl + '","direction":"' + dir + '","price":"' + str.tostring(close, "#.##") + '","ticker":"' + ticker_sym + '","secret":"' + secret + '"}'
+
+// ─── FIRE ALERTS ─────────────────────────────────────────────────────────────
+// Each level fires its own alert — you create ONE alert per line below in TV
+// Alert condition: "TSMP Sweep Alerts: PDH Swept Above" etc
+// Webhook URL: your Railway URL
+
+alert(sweepAbove(pdh)  ? buildPayload("PDH",    "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(pdl)  ? buildPayload("PDL",    "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(pwh)  ? buildPayload("PWH",    "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(pwl)  ? buildPayload("PWL",    "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(wo)   ? buildPayload("WO",     "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(wo)   ? buildPayload("WO",     "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(mo)   ? buildPayload("MO",     "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(mo)   ? buildPayload("MO",     "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(ldn_h)   ? buildPayload("LDN_H",  "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(ldn_l)   ? buildPayload("LDN_L",  "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(pm_h)    ? buildPayload("PMH",    "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(pm_l)    ? buildPayload("PML",    "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(nyam_h)  ? buildPayload("NYAM_H", "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(nyam_l)  ? buildPayload("NYAM_L", "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(lunch_h) ? buildPayload("LUNCH_H","broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(lunch_l) ? buildPayload("LUNCH_L","broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(nypm_h)  ? buildPayload("NYPM_H", "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(nypm_l)  ? buildPayload("NYPM_L", "broken_below") : "", alert.freq_once_per_bar)
+alert(sweepAbove(asia_h)  ? buildPayload("ASIA_H", "broken_above") : "", alert.freq_once_per_bar)
+alert(sweepBelow(asia_l)  ? buildPayload("ASIA_L", "broken_below") : "", alert.freq_once_per_bar)
+
+// ─── VISUAL LEVELS (optional) ────────────────────────────────────────────────
+plot(pdh,    "PDH",    color=color.new(color.red,   40), linewidth=1, style=plot.style_line)
+plot(pdl,    "PDL",    color=color.new(color.green, 40), linewidth=1, style=plot.style_line)
+plot(pwh,    "PWH",    color=color.new(color.red,   20), linewidth=2, style=plot.style_line)
+plot(pwl,    "PWL",    color=color.new(color.green, 20), linewidth=2, style=plot.style_line)
+plot(wo,     "WO",     color=color.new(color.white, 50), linewidth=1, style=plot.style_circles)
+plot(mo,     "MO",     color=color.new(color.white, 60), linewidth=1, style=plot.style_circles)
+plot(ldn_h,  "LDN H",  color=color.new(color.blue,  50), linewidth=1)
+plot(ldn_l,  "LDN L",  color=color.new(color.blue,  50), linewidth=1)
+plot(pm_h,   "PM H",   color=color.new(color.orange,50), linewidth=1)
+plot(pm_l,   "PM L",   color=color.new(color.orange,50), linewidth=1)
+plot(nyam_h, "NYAM H", color=color.new(color.yellow,50), linewidth=1)
+plot(nyam_l, "NYAM L", color=color.new(color.yellow,50), linewidth=1)
