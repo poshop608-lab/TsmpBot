@@ -226,7 +226,7 @@ async function fetchUSDEvents(week = 'thisweek') {
 const ENV_TIER1 = ['federal funds rate','fomc statement','fomc minutes','fomc press conference','interest rate decision','non-farm','nonfarm','nfp','unemployment rate','average hourly earnings','cpi','consumer price index','core pce','pce price'];
 const ENV_TIER2 = ['ppi','producer price','retail sales','ism manufacturing','ism services','s&p global pmi','pmi','gdp','durable goods'];
 const ENV_TIER3 = ['jobless claims','initial claims','continuing claims','jolts','consumer confidence','michigan sentiment','personal income','personal spending','factory orders'];
-const ENV_EXCLUDE = ['nomination','member speaks','speaks','press briefing','testimony','auction','budget balance','statistical bulletin','business index','leading indicators'];
+const ENV_EXCLUDE = ['nomination','member speaks','speaks','press briefing','testimony','auction','budget balance','statistical bulletin','business index','leading indicators','bank holiday','holiday'];
 
 function _envTier(name) {
   const n = name.toLowerCase();
@@ -246,6 +246,7 @@ function _envDayType(events) {
   });
   const t1 = usd.filter(e => _envTier(e.title || e.name || '') === 1);
   const t2 = usd.filter(e => _envTier(e.title || e.name || '') === 2);
+  const t3 = usd.filter(e => _envTier(e.title || e.name || '') === 3);
   const isNFP = t1.some(e => { const n = (e.title || e.name || '').toLowerCase(); return n.includes('non-farm') || n.includes('nfp') || n.includes('unemployment rate'); });
   const isFOMC = usd.some(e => { const n = (e.title || e.name || '').toLowerCase(); return n.includes('federal funds rate') || n.includes('fomc statement') || n.includes('fomc minutes') || n.includes('fomc press conference') || n.includes('interest rate decision'); });
   const isCPI = t1.some(e => { const n = (e.title || e.name || '').toLowerCase(); return n.includes('cpi') || n.includes('consumer price'); });
@@ -253,6 +254,7 @@ function _envDayType(events) {
   if (t1.length) return { type: 'EVENT', nfp: isNFP, fomc: isFOMC, cpi: isCPI, t1, t2 };
   if (t2.length >= 2) return { type: 'STACKED', nfp: false, fomc: false, cpi: false, t1, t2 };
   if (t2.length) return { type: 'NORMAL+', nfp: false, fomc: false, cpi: false, t1, t2 };
+  if (t3.length) return { type: 'NORMAL+', nfp: false, fomc: false, cpi: false, t1, t2 };
   return { type: 'NORMAL', nfp: false, fomc: false, cpi: false, t1, t2 };
 }
 
@@ -334,8 +336,8 @@ function _envSessions(dt, dayOfWeek, allDays, dayIdx) {
       London:    { rating: 'CAUTION', reason: 'CPI day London is accumulation — institutions building positions ahead of 08:30. Watch for manipulation of recent range.', notes: ['Do not trust London direction as final bias', 'Mark London H/L — these become targets after release'] },
       PreMarket: { rating: 'IDEAL',   reason: 'Best window on CPI day. Pre-release setups align with institutional positioning. Enter before 08:15 or stay flat for release.', notes: ['Hard stop before 08:30 — do not hold through release', 'Look for displacement from overnight range'] },
       NYAM:      { rating: 'CAUTION', reason: 'Post-CPI NY AM is a whipsaw zone. First 15–30 min after 08:30 is manipulation. Only enter after TRUE displacement confirms.', notes: ['Wait for candle close confirmation after 09:00', 'HRLR environment — first move reverses frequently', 'If no structure by 10:30 — skip NYAM entirely'] },
-      Lunch:     { rating: 'IDEAL',   reason: 'Lunch is the highest-quality session on CPI day. Price has digested the news, structure clear, continuation setups clean.', notes: ['Best R:R of the day here', 'Look for retest of displacement level from morning'] },
-      NYPM:      { rating: 'AVOID',   reason: 'Post-CPI PM is exhaustion. The move has happened. Price action becomes choppy.', notes: ['Institutions done for the day', 'No new setups — manage existing positions only'] },
+      Lunch:     { rating: 'IDEAL',   reason: 'Lunch is the highest-quality session on CPI day. Price has digested the news, structure is clear, continuation setups are clean.', notes: ['Best R:R of the day here', 'Look for retest of displacement level from morning'] },
+      NYPM:      { rating: 'AVOID',   reason: 'Post-CPI PM is exhaustion. The move has happened. Price action becomes choppy with no directional edge.', notes: ['Institutions done for the day', 'No new setups — manage existing positions only'] },
     };
   }
 
@@ -349,7 +351,7 @@ function _envSessions(dt, dayOfWeek, allDays, dayIdx) {
       London:    { rating: 'IDEAL',   reason: 'Pre-CPI London often delivers clean displacement as institutions begin accumulation. Good entry window.', notes: ['Mark range established in London — it becomes the manipulation zone at NY open'] },
       PreMarket: { rating: 'IDEAL',   reason: 'Pre-market is clean before the pre-CPI noise kicks in at NY open. Look for directional setups.', notes: ['Enter with confirmation', 'Size down slightly — next day is high risk'] },
       NYAM:      { rating: 'AVOID',   reason: 'Pre-CPI NYAM is HRLR territory. Price runs highs and lows without committing. Choppy, fake moves, stop hunts.', notes: ['This is the highest-manipulation window of the pre-CPI day', 'Staying flat here protects capital for tomorrow'] },
-      Lunch:     { rating: 'IDEAL',   reason: 'Lunch on pre-CPI day often sees hidden expansion as final positioning occurs.', notes: ['Watch for clean directional move', 'Lower size — late in the day'] },
+      Lunch:     { rating: 'IDEAL',   reason: 'Lunch on pre-CPI day often sees hidden expansion as final positioning occurs before the event.', notes: ['Watch for clean directional move', 'Lower size — this is late in the day'] },
       NYPM:      { rating: 'AVOID',   reason: 'Pre-event PM — no edge. Institutions done moving, price drifts.', notes: ['Close any open trades', 'Go flat into CPI tomorrow'] },
     };
   }
@@ -365,7 +367,7 @@ function _envSessions(dt, dayOfWeek, allDays, dayIdx) {
       PreMarket: { rating: 'IDEAL',   reason: 'Strong pre-market window before FOMC compression begins. Best entry quality of the day.', notes: ['Enter with confirmation', 'Be flat before PM event'] },
       NYAM:      { rating: 'IDEAL',   reason: 'NY AM is clean on FOMC day — market trading normally before the afternoon event.', notes: ['Standard execution', 'Close or reduce size before 13:00'] },
       Lunch:     { rating: 'IDEAL',   reason: 'Last clean window before FOMC. Institutions quiet, price stable. Last chance for clean setups.', notes: ['Be flat before announcement', 'Do not start new trades after 13:00'] },
-      NYPM:      { rating: 'CAUTION', reason: 'FOMC announcement window. EXTREME volatility. 2-phase move almost certain. Only trade the second move after confirmation.', notes: ['Phase 1: fake move — do NOT trade', 'Phase 2: real move — enter with confirmation only', 'Risk is 3–5x normal'] },
+      NYPM:      { rating: 'CAUTION', reason: 'FOMC announcement window. EXTREME volatility. 2-phase move almost certain. Only trade the second move after confirmation.', notes: ['Phase 1: fake move — do NOT trade', 'Phase 2: real move — enter with confirmation only', 'If unsure — avoid entirely', 'Risk is 3–5x normal'] },
     };
   }
 
