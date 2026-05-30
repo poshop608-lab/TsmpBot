@@ -219,7 +219,7 @@ async function buildWelcomeCard(member, memberCount) {
 // ── Env Calendar ──
 async function fetchUSDEvents(week = 'thisweek') {
   const all = await fetchAllUSDEvents(week);
-  return all.filter(e => e.currency === 'USD' && (e.impact === 'High' || e.impact === 'Medium'));
+  return all.filter(e => (e.country || e.currency || '') === 'USD' && (e.impact === 'High' || e.impact === 'Medium'));
 }
 
 // ── Environment Engine (ported from TradoArc) ──
@@ -238,7 +238,7 @@ function _envTier(name) {
 
 function _envDayType(events) {
   const usd = events.filter(e => {
-    if ((e.currency || '').toUpperCase() !== 'USD') return false;
+    if ((e.country || e.currency || '').toUpperCase() !== 'USD') return false;
     if ((e.impact || '') === 'L' || (e.impact || '') === 'Low') return false;
     const n = (e.title || e.name || '').toLowerCase();
     if (ENV_EXCLUDE.some(x => n.includes(x))) return false;
