@@ -2114,31 +2114,6 @@ client.once(Events.ClientReady, () => {
     if (eng) { ENV_ENGINE_CH_ID = eng.id; console.log('environment-selection channel found:', ENV_ENGINE_CH_ID); }
   }
 
-  // Sunday 19:00 ET scheduler (FF always publishes next week by then; ~12:30am IST Monday)
-  function scheduleNextSunday() {
-    const now = new Date();
-    const nyNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const next = new Date(nyNow);
-    // Find next Sunday 19:00 ET
-    const daysUntilSun = (7 - nyNow.getDay()) % 7 || 7;
-    next.setDate(nyNow.getDate() + daysUntilSun);
-    next.setHours(19, 0, 0, 0);
-    // If today is Sunday and we haven't hit 19:00 yet, post today
-    if (nyNow.getDay() === 0 && nyNow.getHours() < 19) {
-      next.setDate(nyNow.getDate());
-    }
-    const msUntil = next - nyNow;
-    console.log(`Next env calendar post in ${Math.round(msUntil / 1000 / 60)} minutes`);
-    setTimeout(async () => {
-      for (const guild of client.guilds.cache.values()) {
-        await postEnvCalendar(guild).catch(e => console.error('env calendar post err:', e.message));
-        await new Promise(r => setTimeout(r, 2000));
-        await postEnvEngine(guild).catch(e => console.error('env engine post err:', e.message));
-      }
-      scheduleNextSunday(); // reschedule for next week
-    }, msUntil);
-  }
-  scheduleNextSunday();
 });
 
 client.login(process.env.TOKEN);
