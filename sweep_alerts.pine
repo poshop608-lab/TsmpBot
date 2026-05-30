@@ -1,128 +1,182 @@
 // © The Smart Money Paradigm — NQ Sweep Alerts
-// Paste this into TradingView Pine Editor on NQ1! (1-min chart recommended)
-// Set your webhook URL and secret in the variables below, then Add to Chart + Enable Alerts
+// Paste into TradingView Pine Editor on NQ1! (1-min chart)
+// Create ONE alert: Condition → "TSMP Sweep Alerts" → "any alert() function call"
+// Notifications → Webhook URL → https://tsmpbot-production.up.railway.app/sweep
 
 //@version=5
 indicator("TSMP Sweep Alerts", overlay=true, max_lines_count=50, max_labels_count=50)
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-webhook_url = "https://tsmpbot-production.up.railway.app/sweep"
-secret      = "tsmp_sweep_secret"   // must match SWEEP_SECRET in Railway env vars
-ticker_sym  = syminfo.ticker         // auto-detects NQ1! etc
+secret     = "tsmp_sweep_secret"
+ticker_sym = syminfo.ticker
 
-// ─── SESSION TIMES (New York) ─────────────────────────────────────────────────
-t_asia_start  = "2000-0000"
-t_london      = "0200-0500"
-t_premarket   = "0700-0930"
-t_nyam        = "0930-1100"
-t_lunch       = "1130-1330"
-t_nypm        = "1330-1600"
+// ─── PAYLOAD BUILDER ─────────────────────────────────────────────────────────
+payload(lvl, dir) =>
+    '{"level":"' + lvl + '","direction":"' + dir + '","price":"' + str.tostring(close, "#.##") + '","ticker":"' + ticker_sym + '","secret":"' + secret + '"}'
 
-inSession(t) => not na(time("1", t, "America/New_York"))
-
-// ─── LEVEL TRACKING ───────────────────────────────────────────────────────────
-// Previous Day High/Low
+// ─── DAILY / WEEKLY LEVELS ───────────────────────────────────────────────────
 pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
 pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
-
-// Previous Week High/Low
 pwh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
 pwl = request.security(syminfo.tickerid, "W", low[1],  lookahead=barmerge.lookahead_on)
-
-// Weekly Open / Midnight Open
 wo  = request.security(syminfo.tickerid, "W", open,    lookahead=barmerge.lookahead_on)
 mo  = request.security(syminfo.tickerid, "D", open,    lookahead=barmerge.lookahead_on)
 
-// Session High/Low tracking (rolling within each session)
-var float asia_h = na,   var float asia_l = na
-var float ldn_h  = na,   var float ldn_l  = na
-var float pm_h   = na,   var float pm_l   = na
-var float nyam_h = na,   var float nyam_l = na
-var float lunch_h = na,  var float lunch_l = na
-var float nypm_h  = na,  var float nypm_l  = na
+// ─── SESSION DETECTION ───────────────────────────────────────────────────────
+inSess(t) => not na(time("1", t, "America/New_York"))
+newDay     = ta.change(time("D")) != 0
 
-// Reset and build each session's range
-newDay = ta.change(time("D")) != 0
+inAsia = inSess("2000-0000")
+inLdn  = inSess("0200-0500")
+inPM   = inSess("0700-0930")
+inNYAM = inSess("0930-1100")
+inLunch= inSess("1130-1330")
+inNYPM = inSess("1330-1600")
 
+// Detect session starts (transition false→true)
+startAsia  = inAsia  and not inAsia[1]
+startLdn   = inLdn   and not inLdn[1]
+startPM    = inPM    and not inPM[1]
+startNYAM  = inNYAM  and not inNYAM[1]
+startLunch = inLunch and not inLunch[1]
+startNYPM  = inNYPM  and not inNYPM[1]
+
+// ─── SESSION HIGH/LOW TRACKING ────────────────────────────────────────────────
+var float asia_h  = na, var float asia_l  = na
+var float ldn_h   = na, var float ldn_l   = na
+var float pm_h    = na, var float pm_l    = na
+var float nyam_h  = na, var float nyam_l  = na
+var float lunch_h = na, var float lunch_l = na
+var float nypm_h  = na, var float nypm_l  = na
+
+// Reset on session start, then build during session
+if startAsia  => asia_h  := na, asia_l  := na
+if startLdn   => ldn_h   := na, ldn_l   := na
+if startPM    => pm_h    := na, pm_l    := na
+if startNYAM  => nyam_h  := na, nyam_l  := na
+if startLunch => lunch_h := na, lunch_l := na
+if startNYPM  => nypm_h  := na, nypm_l  := na
+
+if inAsia  => asia_h  := na(asia_h)  ? high : math.max(asia_h,  high), asia_l  := na(asia_l)  ? low : math.min(asia_l,  low)
+if inLdn   => ldn_h   := na(ldn_h)   ? high : math.max(ldn_h,   high), ldn_l   := na(ldn_l)   ? low : math.min(ldn_l,   low)
+if inPM    => pm_h    := na(pm_h)    ? high : math.max(pm_h,    high), pm_l    := na(pm_l)    ? low : math.min(pm_l,    low)
+if inNYAM  => nyam_h  := na(nyam_h)  ? high : math.max(nyam_h,  high), nyam_l  := na(nyam_l)  ? low : math.min(nyam_l,  low)
+if inLunch => lunch_h := na(lunch_h) ? high : math.max(lunch_h, high), lunch_l := na(lunch_l) ? low : math.min(lunch_l, low)
+if inNYPM  => nypm_h  := na(nypm_h)  ? high : math.max(nypm_h,  high), nypm_l  := na(nypm_l)  ? low : math.min(nypm_l,  low)
+
+// ─── ONE-SHOT FLAGS ────────────────────────────────────────────────────────────
+// Each flag = true once level is swept. Resets only on new day (daily levels)
+// or new session start (session levels). Prevents re-alert on same level.
+
+var bool f_pdh_up  = false, var bool f_pdl_dn  = false
+var bool f_pwh_up  = false, var bool f_pwl_dn  = false
+var bool f_wo_up   = false, var bool f_wo_dn   = false
+var bool f_mo_up   = false, var bool f_mo_dn   = false
+var bool f_ldn_h   = false, var bool f_ldn_l   = false
+var bool f_pm_h    = false, var bool f_pm_l    = false
+var bool f_nyam_h  = false, var bool f_nyam_l  = false
+var bool f_lunch_h = false, var bool f_lunch_l = false
+var bool f_nypm_h  = false, var bool f_nypm_l  = false
+var bool f_asia_h  = false, var bool f_asia_l  = false
+
+// Reset daily-level flags on new day
 if newDay
-    asia_h := na, asia_l := na
-    ldn_h  := na, ldn_l  := na
-    pm_h   := na, pm_l   := na
-    nyam_h := na, nyam_l := na
-    lunch_h := na, lunch_l := na
-    nypm_h  := na, nypm_l  := na
+    f_pdh_up := false, f_pdl_dn := false
+    f_wo_up  := false, f_wo_dn  := false
+    f_mo_up  := false, f_mo_dn  := false
 
-if inSession(t_asia_start)
-    asia_h := na(asia_h) ? high : math.max(asia_h, high)
-    asia_l := na(asia_l) ? low  : math.min(asia_l, low)
+// Reset weekly-level flags on new week
+newWeek = ta.change(time("W")) != 0
+if newWeek
+    f_pwh_up := false, f_pwl_dn := false
 
-if inSession(t_london)
-    ldn_h := na(ldn_h) ? high : math.max(ldn_h, high)
-    ldn_l := na(ldn_l) ? low  : math.min(ldn_l, low)
+// Reset session-level flags on session start
+if startLdn   => f_ldn_h   := false, f_ldn_l   := false
+if startPM    => f_pm_h    := false, f_pm_l    := false
+if startNYAM  => f_nyam_h  := false, f_nyam_l  := false
+if startLunch => f_lunch_h := false, f_lunch_l := false
+if startNYPM  => f_nypm_h  := false, f_nypm_l  := false
+if startAsia  => f_asia_h  := false, f_asia_l  := false
 
-if inSession(t_premarket)
-    pm_h := na(pm_h) ? high : math.max(pm_h, high)
-    pm_l := na(pm_l) ? low  : math.min(pm_l, low)
+// ─── SWEEP DETECTION (wick-based) ─────────────────────────────────────────────
+// high > level = wick swept above (even if close didn't cross)
+// low  < level = wick swept below
 
-if inSession(t_nyam)
-    nyam_h := na(nyam_h) ? high : math.max(nyam_h, high)
-    nyam_l := na(nyam_l) ? low  : math.min(nyam_l, low)
+swept_pdh_up  = not f_pdh_up  and not na(pdh)    and high > pdh
+swept_pdl_dn  = not f_pdl_dn  and not na(pdl)    and low  < pdl
+swept_pwh_up  = not f_pwh_up  and not na(pwh)    and high > pwh
+swept_pwl_dn  = not f_pwl_dn  and not na(pwl)    and low  < pwl
+swept_wo_up   = not f_wo_up   and not na(wo)     and high > wo
+swept_wo_dn   = not f_wo_dn   and not na(wo)     and low  < wo
+swept_mo_up   = not f_mo_up   and not na(mo)     and high > mo
+swept_mo_dn   = not f_mo_dn   and not na(mo)     and low  < mo
+swept_ldn_h   = not f_ldn_h   and not na(ldn_h)  and high > ldn_h
+swept_ldn_l   = not f_ldn_l   and not na(ldn_l)  and low  < ldn_l
+swept_pm_h    = not f_pm_h    and not na(pm_h)   and high > pm_h
+swept_pm_l    = not f_pm_l    and not na(pm_l)   and low  < pm_l
+swept_nyam_h  = not f_nyam_h  and not na(nyam_h) and high > nyam_h
+swept_nyam_l  = not f_nyam_l  and not na(nyam_l) and low  < nyam_l
+swept_lunch_h = not f_lunch_h and not na(lunch_h)and high > lunch_h
+swept_lunch_l = not f_lunch_l and not na(lunch_l)and low  < lunch_l
+swept_nypm_h  = not f_nypm_h  and not na(nypm_h) and high > nypm_h
+swept_nypm_l  = not f_nypm_l  and not na(nypm_l) and low  < nypm_l
+swept_asia_h  = not f_asia_h  and not na(asia_h) and high > asia_h
+swept_asia_l  = not f_asia_l  and not na(asia_l) and low  < asia_l
 
-if inSession(t_lunch)
-    lunch_h := na(lunch_h) ? high : math.max(lunch_h, high)
-    lunch_l := na(lunch_l) ? low  : math.min(lunch_l, low)
+// ─── SET FLAGS (lock out re-alerts) ──────────────────────────────────────────
+if swept_pdh_up  => f_pdh_up  := true
+if swept_pdl_dn  => f_pdl_dn  := true
+if swept_pwh_up  => f_pwh_up  := true
+if swept_pwl_dn  => f_pwl_dn  := true
+if swept_wo_up   => f_wo_up   := true
+if swept_wo_dn   => f_wo_dn   := true
+if swept_mo_up   => f_mo_up   := true
+if swept_mo_dn   => f_mo_dn   := true
+if swept_ldn_h   => f_ldn_h   := true
+if swept_ldn_l   => f_ldn_l   := true
+if swept_pm_h    => f_pm_h    := true
+if swept_pm_l    => f_pm_l    := true
+if swept_nyam_h  => f_nyam_h  := true
+if swept_nyam_l  => f_nyam_l  := true
+if swept_lunch_h => f_lunch_h := true
+if swept_lunch_l => f_lunch_l := true
+if swept_nypm_h  => f_nypm_h  := true
+if swept_nypm_l  => f_nypm_l  := true
+if swept_asia_h  => f_asia_h  := true
+if swept_asia_l  => f_asia_l  := true
 
-if inSession(t_nypm)
-    nypm_h := na(nypm_h) ? high : math.max(nypm_h, high)
-    nypm_l := na(nypm_l) ? low  : math.min(nypm_l, low)
+// ─── FIRE ALERTS (one per level per session/day) ──────────────────────────────
+if swept_pdh_up  => alert(payload("PDH",     "broken_above"), alert.freq_once_per_bar)
+if swept_pdl_dn  => alert(payload("PDL",     "broken_below"), alert.freq_once_per_bar)
+if swept_pwh_up  => alert(payload("PWH",     "broken_above"), alert.freq_once_per_bar)
+if swept_pwl_dn  => alert(payload("PWL",     "broken_below"), alert.freq_once_per_bar)
+if swept_wo_up   => alert(payload("WO",      "broken_above"), alert.freq_once_per_bar)
+if swept_wo_dn   => alert(payload("WO",      "broken_below"), alert.freq_once_per_bar)
+if swept_mo_up   => alert(payload("MO",      "broken_above"), alert.freq_once_per_bar)
+if swept_mo_dn   => alert(payload("MO",      "broken_below"), alert.freq_once_per_bar)
+if swept_ldn_h   => alert(payload("LDN_H",   "broken_above"), alert.freq_once_per_bar)
+if swept_ldn_l   => alert(payload("LDN_L",   "broken_below"), alert.freq_once_per_bar)
+if swept_pm_h    => alert(payload("PMH",     "broken_above"), alert.freq_once_per_bar)
+if swept_pm_l    => alert(payload("PML",     "broken_below"), alert.freq_once_per_bar)
+if swept_nyam_h  => alert(payload("NYAM_H",  "broken_above"), alert.freq_once_per_bar)
+if swept_nyam_l  => alert(payload("NYAM_L",  "broken_below"), alert.freq_once_per_bar)
+if swept_lunch_h => alert(payload("LUNCH_H", "broken_above"), alert.freq_once_per_bar)
+if swept_lunch_l => alert(payload("LUNCH_L", "broken_below"), alert.freq_once_per_bar)
+if swept_nypm_h  => alert(payload("NYPM_H",  "broken_above"), alert.freq_once_per_bar)
+if swept_nypm_l  => alert(payload("NYPM_L",  "broken_below"), alert.freq_once_per_bar)
+if swept_asia_h  => alert(payload("ASIA_H",  "broken_above"), alert.freq_once_per_bar)
+if swept_asia_l  => alert(payload("ASIA_L",  "broken_below"), alert.freq_once_per_bar)
 
-// ─── SWEEP DETECTION ──────────────────────────────────────────────────────────
-// A sweep = price wicks above/below the level but closes back (or just crosses)
-// Using crossover/crossunder on close for simplicity — works for most sweeps
-
-sweepAbove(lvl) => not na(lvl) and ta.crossover(close, lvl)
-sweepBelow(lvl) => not na(lvl) and ta.crossunder(close, lvl)
-
-// ─── WEBHOOK PAYLOAD BUILDER ─────────────────────────────────────────────────
-buildPayload(lvl, dir) =>
-    '{"level":"' + lvl + '","direction":"' + dir + '","price":"' + str.tostring(close, "#.##") + '","ticker":"' + ticker_sym + '","secret":"' + secret + '"}'
-
-// ─── FIRE ALERTS ─────────────────────────────────────────────────────────────
-// Each level fires its own alert — you create ONE alert per line below in TV
-// Alert condition: "TSMP Sweep Alerts: PDH Swept Above" etc
-// Webhook URL: your Railway URL
-
-alert(sweepAbove(pdh)  ? buildPayload("PDH",    "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(pdl)  ? buildPayload("PDL",    "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(pwh)  ? buildPayload("PWH",    "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(pwl)  ? buildPayload("PWL",    "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(wo)   ? buildPayload("WO",     "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(wo)   ? buildPayload("WO",     "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(mo)   ? buildPayload("MO",     "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(mo)   ? buildPayload("MO",     "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(ldn_h)   ? buildPayload("LDN_H",  "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(ldn_l)   ? buildPayload("LDN_L",  "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(pm_h)    ? buildPayload("PMH",    "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(pm_l)    ? buildPayload("PML",    "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(nyam_h)  ? buildPayload("NYAM_H", "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(nyam_l)  ? buildPayload("NYAM_L", "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(lunch_h) ? buildPayload("LUNCH_H","broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(lunch_l) ? buildPayload("LUNCH_L","broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(nypm_h)  ? buildPayload("NYPM_H", "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(nypm_l)  ? buildPayload("NYPM_L", "broken_below") : "", alert.freq_once_per_bar)
-alert(sweepAbove(asia_h)  ? buildPayload("ASIA_H", "broken_above") : "", alert.freq_once_per_bar)
-alert(sweepBelow(asia_l)  ? buildPayload("ASIA_L", "broken_below") : "", alert.freq_once_per_bar)
-
-// ─── VISUAL LEVELS (optional) ────────────────────────────────────────────────
-plot(pdh,    "PDH",    color=color.new(color.red,   40), linewidth=1, style=plot.style_line)
-plot(pdl,    "PDL",    color=color.new(color.green, 40), linewidth=1, style=plot.style_line)
-plot(pwh,    "PWH",    color=color.new(color.red,   20), linewidth=2, style=plot.style_line)
-plot(pwl,    "PWL",    color=color.new(color.green, 20), linewidth=2, style=plot.style_line)
-plot(wo,     "WO",     color=color.new(color.white, 50), linewidth=1, style=plot.style_circles)
-plot(mo,     "MO",     color=color.new(color.white, 60), linewidth=1, style=plot.style_circles)
-plot(ldn_h,  "LDN H",  color=color.new(color.blue,  50), linewidth=1)
-plot(ldn_l,  "LDN L",  color=color.new(color.blue,  50), linewidth=1)
-plot(pm_h,   "PM H",   color=color.new(color.orange,50), linewidth=1)
-plot(pm_l,   "PM L",   color=color.new(color.orange,50), linewidth=1)
-plot(nyam_h, "NYAM H", color=color.new(color.yellow,50), linewidth=1)
-plot(nyam_l, "NYAM L", color=color.new(color.yellow,50), linewidth=1)
+// ─── VISUAL LEVELS ────────────────────────────────────────────────────────────
+plot(pdh,    "PDH",    color=color.new(color.red,    40), linewidth=1)
+plot(pdl,    "PDL",    color=color.new(color.green,  40), linewidth=1)
+plot(pwh,    "PWH",    color=color.new(color.red,    20), linewidth=2)
+plot(pwl,    "PWL",    color=color.new(color.green,  20), linewidth=2)
+plot(wo,     "WO",     color=color.new(color.white,  50), linewidth=1, style=plot.style_circles)
+plot(mo,     "MO",     color=color.new(color.white,  60), linewidth=1, style=plot.style_circles)
+plot(ldn_h,  "LDN H",  color=color.new(color.blue,   50), linewidth=1)
+plot(ldn_l,  "LDN L",  color=color.new(color.blue,   50), linewidth=1)
+plot(pm_h,   "PM H",   color=color.new(color.orange, 50), linewidth=1)
+plot(pm_l,   "PM L",   color=color.new(color.orange, 50), linewidth=1)
+plot(nyam_h, "NYAM H", color=color.new(color.yellow, 50), linewidth=1)
+plot(nyam_l, "NYAM L", color=color.new(color.yellow, 50), linewidth=1)
