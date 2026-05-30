@@ -662,58 +662,37 @@ async function buildEnvEngineCard(allEvents) {
   return canvas.toBuffer('image/png');
 }
 
-// Cached FF IPs to avoid DNS lookup being blocked
-const FF_IPS = ['104.18.6.156', '104.18.7.156'];
-let _ffIpIdx = 0;
-
 async function fetchAllUSDEvents(week = 'thisweek') {
-  const https = require('https');
-  const dns = require('dns').promises;
-  const path = `/ff_calendar_${week}.json`;
+  // 1. Read from GitHub-Actions-committed local file (primary — avoids FF rate limit)
+  try {
+    const filePath = path.join(__dirname, 'data', `ff_${week}.json`);
+    const raw = fs.readFileSync(filePath, 'utf8').trim();
+    if (raw && raw !== '[]') {
+      const j = JSON.parse(raw);
+      if (Array.isArray(j) && j.length > 0) {
+        console.log(`FF data loaded from file (${week}): ${j.length} events`);
+        return j;
+      }
+    }
+  } catch {}
 
-  function rawGet(host, hdrs) {
-    return new Promise((resolve, reject) => {
-      const req = https.get({
-        host,
-        path,
-        headers: { 'Host': 'nfs.faireconomy.media', ...hdrs },
-        rejectUnauthorized: false,
-      }, (res) => {
-        let d = '';
-        res.on('data', c => d += c);
-        res.on('end', () => resolve({ status: res.statusCode, body: d }));
-      });
-      req.on('error', reject);
-      req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
-    });
-  }
+  // 2. HTTP fallback — direct fetch with Wget UA
+  console.warn(`FF file empty for ${week}, falling back to HTTP`);
+  const https = require('https');
+  const FF_URL = `https://nfs.faireconomy.media/ff_calendar_${week}.json`;
 
   const attempts = [
-    // Direct IP bypass — avoids hostname-based rate limit
     async () => {
-      const ip = FF_IPS[_ffIpIdx % FF_IPS.length];
-      const { status, body } = await rawGet(ip, { 'User-Agent': 'Wget/1.21.3', 'Accept': '*/*' });
-      if (status !== 200) throw new Error(String(status));
-      if (body.trim().startsWith('<')) throw new Error('HTML');
-      return JSON.parse(body);
+      const r = await fetch(FF_URL, { headers: { 'User-Agent': 'Wget/1.21.3', 'Accept': '*/*' } });
+      if (!r.ok) throw new Error(String(r.status));
+      const text = await r.text();
+      if (text.trim().startsWith('<')) throw new Error('HTML');
+      return JSON.parse(text);
     },
-    // Re-resolve DNS in case IPs rotated, then try second IP
     async () => {
-      let ips = FF_IPS;
-      try { ips = await dns.resolve4('nfs.faireconomy.media'); } catch {}
-      _ffIpIdx++;
-      const ip = ips[_ffIpIdx % ips.length];
-      const { status, body } = await rawGet(ip, { 'User-Agent': 'curl/7.88.1', 'Accept': '*/*' });
-      if (status !== 200) throw new Error(String(status));
-      if (body.trim().startsWith('<')) throw new Error('HTML');
-      return JSON.parse(body);
-    },
-    // Hostname fallback
-    async () => {
-      const FF_URL = `https://nfs.faireconomy.media${path}`;
-      const req = await fetch(FF_URL, { headers: { 'User-Agent': 'Wget/1.21.3', 'Accept': '*/*' } });
-      if (!req.ok) throw new Error(String(req.status));
-      const text = await req.text();
+      const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(FF_URL)}`, { headers: { 'User-Agent': 'Wget/1.21.3' } });
+      if (!r.ok) throw new Error(String(r.status));
+      const text = await r.text();
       if (text.trim().startsWith('<')) throw new Error('HTML');
       return JSON.parse(text);
     },
@@ -725,7 +704,11 @@ async function fetchAllUSDEvents(week = 'thisweek') {
         attempt(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
       ]);
-      if (Array.isArray(result) && result.length) return result;
+      if (Array.isArray(result) && result.length) {
+        // Cache to file for next time
+        try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
+        return result;
+      }
     } catch (e) {
       console.warn(`FF fetch attempt failed: ${e.message}`);
     }

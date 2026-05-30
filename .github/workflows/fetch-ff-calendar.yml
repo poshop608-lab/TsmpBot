@@ -1,0 +1,48 @@
+name: Fetch FF Calendar
+
+on:
+  schedule:
+    # Every Sunday 18:00 UTC (2pm ET) — FF publishes next week by then
+    - cron: '0 18 * * 0'
+    # Every Monday 06:00 UTC (2am ET) — refresh thisweek
+    - cron: '0 6 * * 1'
+  workflow_dispatch: # allow manual trigger
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch this week
+        run: |
+          curl -s -A "Wget/1.21.3" \
+            "https://nfs.faireconomy.media/ff_calendar_thisweek.json" \
+            -o data/ff_thisweek.json || echo "[]" > data/ff_thisweek.json
+
+      - name: Fetch next week
+        run: |
+          curl -s -A "Wget/1.21.3" \
+            "https://nfs.faireconomy.media/ff_calendar_nextweek.json" \
+            -o data/ff_nextweek.json || echo "[]" > data/ff_nextweek.json
+
+      - name: Validate and fallback on HTML response
+        run: |
+          for f in data/ff_thisweek.json data/ff_nextweek.json; do
+            first=$(head -c 1 "$f")
+            if [ "$first" != "[" ] && [ "$first" != "{" ]; then
+              echo "[] " > "$f"
+              echo "Warning: $f returned non-JSON, reset to empty array"
+            fi
+          done
+
+      - name: Commit if changed
+        run: |
+          git config user.email "bot@tsmp.local"
+          git config user.name "FF Fetcher"
+          mkdir -p data
+          git add data/ff_thisweek.json data/ff_nextweek.json
+          git diff --cached --quiet || git commit -m "chore: update FF calendar data"
+          git push
