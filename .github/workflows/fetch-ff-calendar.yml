@@ -1,12 +1,12 @@
-name: Fetch FF Calendar
+name: Fetch Economic Calendar
 
 on:
   schedule:
-    # Every Sunday 18:00 UTC (2pm ET) — FF publishes next week by then
+    # Every Sunday 18:00 UTC (2pm ET)
     - cron: '0 18 * * 0'
     # Every Monday 06:00 UTC (2am ET) — refresh thisweek
     - cron: '0 6 * * 1'
-  workflow_dispatch: # allow manual trigger
+  workflow_dispatch:
 
 jobs:
   fetch:
@@ -16,33 +16,110 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fetch this week
-        run: |
-          curl -s -A "Wget/1.21.3" \
-            "https://nfs.faireconomy.media/ff_calendar_thisweek.json" \
-            -o data/ff_thisweek.json || echo "[]" > data/ff_thisweek.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: Fetch next week
+      - name: Fetch calendar data via Investing.com
         run: |
-          curl -s -A "Wget/1.21.3" \
-            "https://nfs.faireconomy.media/ff_calendar_nextweek.json" \
-            -o data/ff_nextweek.json || echo "[]" > data/ff_nextweek.json
+          node - <<'EOF'
+          const https = require('https');
+          const fs = require('fs');
 
-      - name: Validate and fallback on HTML response
-        run: |
-          for f in data/ff_thisweek.json data/ff_nextweek.json; do
-            first=$(head -c 1 "$f")
-            if [ "$first" != "[" ] && [ "$first" != "{" ]; then
-              echo "[] " > "$f"
-              echo "Warning: $f returned non-JSON, reset to empty array"
-            fi
-          done
+          function weekDateRange(week) {
+            const now = new Date();
+            const nyNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+            const dow = nyNow.getDay();
+            let monday = new Date(nyNow);
+            if (week === 'nextweek') { const d = (8-dow)%7||7; monday.setDate(nyNow.getDate()+d); }
+            else { const d = dow===0?1:-(dow-1); monday.setDate(nyNow.getDate()+d); }
+            const friday = new Date(monday); friday.setDate(monday.getDate()+4);
+            const fmt = d => d.toISOString().slice(0,10);
+            return { from: fmt(monday), to: fmt(friday) };
+          }
+
+          function parseInvestingHTML(html) {
+            const events = [];
+            const rowRe = /<tr[^>]+id="eventRowId_(\d+)"[^>]*data-event-datetime="([^"]+)"[^>]*>([\s\S]*?)<\/tr>/g;
+            let m;
+            while ((m = rowRe.exec(html)) !== null) {
+              const body = m[3];
+              const datetime = m[2];
+              const dateStr = datetime.slice(0,10).replace(/\//g,'-');
+              const timeStr = datetime.slice(11,16);
+              const currMatch = body.match(/>\s*([A-Z]{3})\s*<\/td>/);
+              const currency = currMatch ? currMatch[1].trim() : '';
+              const bullMatch = body.match(/data-img_key="bull(\d)"/);
+              const bull = bullMatch ? parseInt(bullMatch[1]) : 0;
+              const impact = bull===3?'High':bull===2?'Medium':'Low';
+              const titleMatch = body.match(/class="left event"[^>]*>[\s\S]*?<a[^>]*>\s*([^<]+)/);
+              const title = titleMatch ? titleMatch[1].trim() : '';
+              const forecastMatch = body.match(/id="eventForecast_\d+"[^>]*>([^<]*)</);
+              const previousMatch = body.match(/id="eventPrevious_\d+"[^>]*>(?:<span[^>]*>)?([^<]*)/);
+              const forecast = forecastMatch ? forecastMatch[1].replace(/&nbsp;/g,'').trim() : '';
+              const previous = previousMatch ? previousMatch[1].replace(/&nbsp;/g,'').trim() : '';
+              if (!title || !currency) continue;
+              events.push({ title, country: currency, currency, date: dateStr+'T'+timeStr+':00-04:00', impact, forecast, previous });
+            }
+            return events;
+          }
+
+          function fetchWeek(week) {
+            return new Promise((resolve, reject) => {
+              const { from, to } = weekDateRange(week);
+              const body = `country%5B%5D=5&importance%5B%5D=3&importance%5B%5D=2&importance%5B%5D=1&dateFrom=${from}&dateTo=${to}&timeZone=8&timeFilter=timeRemain&currentTab=custom&submitFilters=1`;
+              const req = https.request({
+                hostname: 'www.investing.com',
+                path: '/economic-calendar/Service/getCalendarFilteredData',
+                method: 'POST',
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                  'Accept': 'application/json, text/javascript, */*; q=0.01',
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'X-Requested-With': 'XMLHttpRequest',
+                  'Referer': 'https://www.investing.com/economic-calendar/',
+                  'Origin': 'https://www.investing.com',
+                  'Content-Length': Buffer.byteLength(body),
+                }
+              }, (res) => {
+                let d = '';
+                res.on('data', c => d += c);
+                res.on('end', () => {
+                  try {
+                    const j = JSON.parse(d);
+                    resolve(parseInvestingHTML(j.data || ''));
+                  } catch(e) { reject(new Error('parse fail: ' + e.message)); }
+                });
+              });
+              req.on('error', reject);
+              req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
+              req.write(body);
+              req.end();
+            });
+          }
+
+          (async () => {
+            fs.mkdirSync('data', { recursive: true });
+            for (const week of ['thisweek', 'nextweek']) {
+              try {
+                const events = await fetchWeek(week);
+                if (events.length) {
+                  fs.writeFileSync(`data/ff_${week}.json`, JSON.stringify(events));
+                  console.log(`${week}: ${events.length} events saved`);
+                } else {
+                  console.log(`${week}: 0 events — keeping existing file`);
+                }
+              } catch(e) {
+                console.error(`${week} failed: ${e.message}`);
+              }
+            }
+          })();
+          EOF
 
       - name: Commit if changed
         run: |
           git config user.email "bot@tsmp.local"
-          git config user.name "FF Fetcher"
-          mkdir -p data
+          git config user.name "Calendar Fetcher"
           git add data/ff_thisweek.json data/ff_nextweek.json
-          git diff --cached --quiet || git commit -m "chore: update FF calendar data"
+          git diff --cached --quiet || git commit -m "chore: update calendar data"
           git push
