@@ -499,7 +499,7 @@ async function buildEnvEngineCard(allEvents) {
   const DAY_HEADER_H = 80;
   const FOOTER_H = 60;
   const SESSIONS_BLOCK_H = SESSIONS.length * SESSION_ROW_H + 16;
-  const DAY_CARD_H = DAY_HEADER_H + SESSIONS_BLOCK_H + 40;
+  const DAY_CARD_H = DAY_HEADER_H + SESSIONS_BLOCK_H + 70;
   const H = HEADER_H + DAY_CARD_H + FOOTER_H;
 
   const canvas = createCanvas(W, H);
@@ -651,18 +651,28 @@ async function buildEnvEngineCard(allEvents) {
 
     // Warning strip at bottom of card (if any)
     if (sd.warning) {
-      const warnY = sY + 4;
-      ctx.fillStyle = 'rgba(248,113,113,0.06)';
-      ctx.beginPath(); ctx.roundRect(cx + 8, warnY, DAY_W - 16, 22, 4); ctx.fill();
-      ctx.strokeStyle = 'rgba(248,113,113,0.2)'; ctx.lineWidth = 0.5;
-      ctx.beginPath(); ctx.roundRect(cx + 8, warnY, DAY_W - 16, 22, 4); ctx.stroke();
-      ctx.fillStyle = '#f87171'; ctx.font = '7px Jakarta400';
-      // Truncate warning to fit
-      let warnText = '⚠ ' + sd.warning;
+      const warnY = sY + 6;
+      const warnFont = '8.5px Jakarta400';
+      ctx.font = warnFont;
       const maxW = DAY_W - 28;
-      while (ctx.measureText(warnText).width > maxW && warnText.length > 10) warnText = warnText.slice(0, -2);
-      if (warnText.length < sd.warning.length + 3) warnText += '…';
-      ctx.fillText(warnText, cx + 14, warnY + 14);
+      // Word-wrap warning text
+      const words = ('⚠ ' + sd.warning).split(' ');
+      const lines = [];
+      let cur = '';
+      for (const w of words) {
+        const test = cur ? cur + ' ' + w : w;
+        if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; }
+        else cur = test;
+      }
+      if (cur) lines.push(cur);
+      const lineH = 13;
+      const stripH = lines.length * lineH + 10;
+      ctx.fillStyle = 'rgba(248,113,113,0.07)';
+      ctx.beginPath(); ctx.roundRect(cx + 8, warnY, DAY_W - 16, stripH, 4); ctx.fill();
+      ctx.strokeStyle = 'rgba(248,113,113,0.25)'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.roundRect(cx + 8, warnY, DAY_W - 16, stripH, 4); ctx.stroke();
+      ctx.fillStyle = '#f87171'; ctx.font = warnFont;
+      lines.forEach((ln, li) => ctx.fillText(ln, cx + 14, warnY + 6 + lineH * (li + 1) - 2));
     }
   }
 
