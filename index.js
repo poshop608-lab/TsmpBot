@@ -226,7 +226,7 @@ async function fetchUSDEvents(week = 'thisweek') {
 const ENV_TIER1 = ['federal funds rate','fomc statement','fomc minutes','fomc press conference','interest rate decision','non-farm','nonfarm','nfp','unemployment rate','average hourly earnings','cpi','consumer price index','core pce','pce price'];
 const ENV_TIER2 = ['ppi','producer price','retail sales','ism manufacturing','ism services','s&p global pmi','pmi','gdp','durable goods'];
 const ENV_TIER3 = ['jobless claims','initial claims','continuing claims','jolts','consumer confidence','michigan sentiment','personal income','personal spending','factory orders'];
-const ENV_EXCLUDE = ['nomination','member speaks','speaks','press briefing','testimony','auction','budget balance','statistical bulletin','business index','leading indicators','bank holiday','holiday'];
+const ENV_EXCLUDE = ['nomination','member speaks','speaks','press briefing','testimony','auction','budget balance','statistical bulletin','business index','leading indicators','bank holiday','holiday','crude oil','natural gas','baker hughes','rig count','cftc','speculative positions','net positions','gasoline inventories','distillate','heating oil','commitment of traders','cushing','redbook','ibd/tipp','challenger','federal budget','beige book'];
 
 function _envTier(name) {
   const n = name.toLowerCase();
@@ -676,59 +676,161 @@ async function buildEnvEngineCard(allEvents) {
   return canvas.toBuffer('image/png');
 }
 
+function _weekDateRange(week) {
+  const now = new Date();
+  const nyNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dow = nyNow.getDay();
+  let monday = new Date(nyNow);
+  if (week === 'nextweek') {
+    const d = (8 - dow) % 7 || 7;
+    monday.setDate(nyNow.getDate() + d);
+  } else {
+    const d = dow === 0 ? 1 : -(dow - 1);
+    monday.setDate(nyNow.getDate() + d);
+  }
+  const friday = new Date(monday); friday.setDate(monday.getDate() + 4);
+  const fmt = d => d.toISOString().slice(0, 10);
+  return { from: fmt(monday), to: fmt(friday) };
+}
+
+function _parseInvestingHTML(html) {
+  const events = [];
+  // Extract day headers for date context
+  const dayMap = {};
+  const dayHeaders = [...html.matchAll(/id="theDay(\d+)"[^>]*>([^<]+)</g)];
+  for (const m of dayHeaders) {
+    const ts = parseInt(m[1]) * 1000;
+    const d = new Date(ts);
+    const iso = d.toISOString().slice(0, 10);
+    dayMap[m[1]] = iso;
+  }
+
+  const rowRe = /<tr[^>]+id="eventRowId_(\d+)"[^>]*data-event-datetime="([^"]+)"[^>]*>([\s\S]*?)<\/tr>/g;
+  let m;
+  while ((m = rowRe.exec(html)) !== null) {
+    const body = m[3];
+    const datetime = m[2]; // "2026/06/02 08:30:00"
+    const dateStr = datetime.slice(0, 10).replace(/\//g, '-');
+    const timeStr = datetime.slice(11, 16);
+
+    // Currency
+    const currMatch = body.match(/class="ceFlags[^"]*"[^>]*>\s*<\/span>\s*([A-Z]{3})/);
+    const currency = currMatch ? currMatch[1].trim() : '';
+
+    // Impact — bull3=High, bull2=Medium, bull1=Low
+    const bullMatch = body.match(/data-img_key="bull(\d)"/);
+    const bull = bullMatch ? parseInt(bullMatch[1]) : 0;
+    const impact = bull === 3 ? 'High' : bull === 2 ? 'Medium' : 'Low';
+
+    // Title
+    const titleMatch = body.match(/class="left event"[^>]*>[^<]*<a[^>]*>\s*([^<]+)/);
+    const title = titleMatch ? titleMatch[1].trim() : '';
+
+    // Forecast / Previous
+    const forecastMatch = body.match(/id="eventForecast_\d+"[^>]*>([^<]*)</);
+    const previousMatch = body.match(/id="eventPrevious_\d+"[^>]*>(?:<span[^>]*>)?([^<]*)/);
+    const forecast = forecastMatch ? forecastMatch[1].replace(/&nbsp;/g, '').trim() : '';
+    const previous = previousMatch ? previousMatch[1].replace(/&nbsp;/g, '').trim() : '';
+
+    if (!title || !currency) continue;
+
+    // Build date in FF-compatible format (ET offset -04:00 approximate)
+    events.push({
+      title,
+      country: currency,
+      currency,
+      date: `${dateStr}T${timeStr}:00-04:00`,
+      impact,
+      forecast,
+      previous,
+    });
+  }
+  return events;
+}
+
+async function _fetchInvesting(week) {
+  const { from, to } = _weekDateRange(week);
+  const https = require('https');
+  const body = `country%5B%5D=5&importance%5B%5D=3&importance%5B%5D=2&importance%5B%5D=1&dateFrom=${from}&dateTo=${to}&timeZone=8&timeFilter=timeRemain&currentTab=custom&submitFilters=1`;
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'www.investing.com',
+      path: '/economic-calendar/Service/getCalendarFilteredData',
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': 'https://www.investing.com/economic-calendar/',
+        'Origin': 'https://www.investing.com',
+        'Content-Length': Buffer.byteLength(body),
+      }
+    }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          const events = _parseInvestingHTML(j.data || '');
+          resolve(events);
+        } catch (e) { reject(new Error('investing parse fail: ' + e.message)); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
 async function fetchAllUSDEvents(week = 'thisweek') {
-  // 1. Read from GitHub-Actions-committed local file (primary — avoids FF rate limit)
+  // 1. Read from file cache (populated by GitHub Action or previous successful fetch)
   try {
     const filePath = path.join(__dirname, 'data', `ff_${week}.json`);
     const raw = fs.readFileSync(filePath, 'utf8').trim();
     if (raw && raw !== '[]') {
       const j = JSON.parse(raw);
       if (Array.isArray(j) && j.length > 0) {
-        console.log(`FF data loaded from file (${week}): ${j.length} events`);
+        console.log(`Calendar loaded from file (${week}): ${j.length} events`);
         return j;
       }
     }
   } catch {}
 
-  // 2. HTTP fallback — direct fetch with Wget UA
-  console.warn(`FF file empty for ${week}, falling back to HTTP`);
-  const https = require('https');
-  const FF_URL = `https://nfs.faireconomy.media/ff_calendar_${week}.json`;
-
-  const attempts = [
-    async () => {
-      const r = await fetch(FF_URL, { headers: { 'User-Agent': 'Wget/1.21.3', 'Accept': '*/*' } });
-      if (!r.ok) throw new Error(String(r.status));
-      const text = await r.text();
-      if (text.trim().startsWith('<')) throw new Error('HTML');
-      return JSON.parse(text);
-    },
-    async () => {
-      const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(FF_URL)}`, { headers: { 'User-Agent': 'Wget/1.21.3' } });
-      if (!r.ok) throw new Error(String(r.status));
-      const text = await r.text();
-      if (text.trim().startsWith('<')) throw new Error('HTML');
-      return JSON.parse(text);
-    },
-  ];
-
-  for (const attempt of attempts) {
-    try {
-      const result = await Promise.race([
-        attempt(),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
-      ]);
-      if (Array.isArray(result) && result.length) {
-        // Cache to file for next time
-        try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
-        return result;
-      }
-    } catch (e) {
-      console.warn(`FF fetch attempt failed: ${e.message}`);
+  // 2. Investing.com — works for any week including future dates, no rate limit
+  try {
+    console.log(`Fetching from Investing.com (${week})...`);
+    const result = await Promise.race([
+      _fetchInvesting(week),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000)),
+    ]);
+    if (Array.isArray(result) && result.length) {
+      console.log(`Investing.com (${week}): ${result.length} events`);
+      try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
+      return result;
     }
-  }
+  } catch (e) { console.warn(`Investing.com fetch failed: ${e.message}`); }
 
-  console.error('All FF fetch attempts failed');
+  // 3. FF direct fallback (thisweek/nextweek only, may be rate limited)
+  try {
+    console.warn(`Falling back to FF direct (${week})...`);
+    const FF_URL = `https://nfs.faireconomy.media/ff_calendar_${week}.json`;
+    const r = await fetch(FF_URL, { headers: { 'User-Agent': 'Wget/1.21.3', 'Accept': '*/*' } });
+    if (r.ok) {
+      const text = await r.text();
+      if (!text.trim().startsWith('<')) {
+        const result = JSON.parse(text);
+        if (Array.isArray(result) && result.length) {
+          try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
+          return result;
+        }
+      }
+    }
+  } catch (e) { console.warn(`FF fallback failed: ${e.message}`); }
+
+  console.error(`All fetch attempts failed for ${week}`);
   return [];
 }
 
