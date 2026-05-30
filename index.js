@@ -980,184 +980,178 @@ function fmtEventTime(iso) {
 }
 
 async function buildEnvCalendarCard(events) {
-  // Sort High first within each day, cap total rows to keep card readable
-  const MAX_ROWS = 20;
-  const sorted = [...events].sort((a, b) => (a.impact === 'High' ? 0 : 1) - (b.impact === 'High' ? 0 : 1));
-  const shown = sorted.slice(0, MAX_ROWS);
-  const overflow = events.length - shown.length;
-
-  const days = {};
-  for (const e of shown) {
-    const k = fmtEventDate(e.date);
-    if (!days[k]) days[k] = [];
-    days[k].push(e);
+  // Group by Mon–Fri using ISO date key, sort High first within each day
+  const DAY_KEYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+  const byDay = { Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [] };
+  for (const e of events) {
+    const d = new Date(e.date);
+    const dow = d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+    if (byDay[dow]) byDay[dow].push(e);
   }
+  for (const k of DAY_KEYS) byDay[k].sort((a, b) => (a.impact === 'High' ? 0 : 1) - (b.impact === 'High' ? 0 : 1));
 
-  const W = 980, PAD = 48, ROW_H = 54, DAY_HEADER_H = 64, SECTION_GAP = 24;
-  let H = 210;
-  for (const k of Object.keys(days)) H += DAY_HEADER_H + days[k].length * ROW_H + SECTION_GAP;
-  H += overflow ? 90 : 70;
-  if (events.length === 0) H = 280;
+  // Fixed landscape dimensions — matches env engine aspect ratio
+  const W = 1200, H = 640, PAD = 44;
+  const HEADER_H = 140, FOOTER_H = 44;
+  const CARD_Y = HEADER_H + 10;
+  const CARD_H = H - HEADER_H - FOOTER_H - 10;
+  const GAP = 12;
+  const DAY_W = (W - PAD * 2 - GAP * 4) / 5;
+  const DAY_INNER_PAD = 12;
+  const ROW_H = 44;
+  const DAY_HEADER_H = 44;
+  // Max events per column that fit
+  const MAX_PER_DAY = Math.floor((CARD_H - DAY_HEADER_H - 10) / ROW_H);
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
+  // Background
   ctx.fillStyle = '#0b0d10';
   ctx.fillRect(0, 0, W, H);
 
-  // Top accent bar
+  // Top accent
   const topBar = ctx.createLinearGradient(0, 0, W, 0);
   topBar.addColorStop(0, 'rgba(255,255,255,0)');
-  topBar.addColorStop(0.35, 'rgba(255,255,255,0.2)');
-  topBar.addColorStop(0.65, 'rgba(255,255,255,0.2)');
+  topBar.addColorStop(0.35, 'rgba(255,255,255,0.18)');
+  topBar.addColorStop(0.65, 'rgba(255,255,255,0.18)');
   topBar.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = topBar; ctx.fillRect(0, 0, W, 2);
 
-  // Left accent bar
-  const leftBar = ctx.createLinearGradient(0, 80, 0, H - 80);
+  // Left accent
+  const leftBar = ctx.createLinearGradient(0, 60, 0, H - 60);
   leftBar.addColorStop(0, 'rgba(255,255,255,0)');
-  leftBar.addColorStop(0.2, 'rgba(255,255,255,0.14)');
-  leftBar.addColorStop(0.8, 'rgba(255,255,255,0.14)');
+  leftBar.addColorStop(0.2, 'rgba(255,255,255,0.12)');
+  leftBar.addColorStop(0.8, 'rgba(255,255,255,0.12)');
   leftBar.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = leftBar; ctx.fillRect(0, 0, 2, H);
 
-  // Header
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
-  ctx.font = '10px Jakarta400';
-  ctx.fillText('T H E   S M A R T   M O N E Y   P A R A D I G M', PAD, 48);
+  // Header text
+  ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '9px Jakarta400';
+  ctx.fillText('T H E   S M A R T   M O N E Y   P A R A D I G M', PAD, 36);
 
   ctx.save();
-  ctx.shadowColor = 'rgba(255,255,255,0.4)'; ctx.shadowBlur = 30;
-  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 36px Jakarta700';
-  ctx.fillText('Economic Calendar', PAD, 98);
+  ctx.shadowColor = 'rgba(255,255,255,0.35)'; ctx.shadowBlur = 28;
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 34px Jakarta700';
+  ctx.fillText('Economic Calendar', PAD, 84);
   ctx.restore();
 
-  const weekLabel = 'USD High & Medium Impact News  ·  Week of ' + new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }) + '  ·  All times ET';
-  ctx.fillStyle = 'rgba(255,255,255,0.38)'; ctx.font = '13px Jakarta400';
-  ctx.fillText(weekLabel, PAD, 126);
+  const weekLabel = 'USD High & Medium Impact Events  ·  Week of ' + new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }) + '  ·  All times ET';
+  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px Jakarta400';
+  ctx.fillText(weekLabel, PAD, 108);
 
-  // Legend
-  ctx.save();
-  ctx.shadowColor = 'rgba(239,68,68,0.9)'; ctx.shadowBlur = 10;
-  ctx.beginPath(); ctx.arc(PAD + 6, 152, 5, 0, Math.PI * 2); ctx.fillStyle = '#ef4444'; ctx.fill();
+  // Legend — top right
+  const legX = W - PAD;
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px Jakarta400';
+  ctx.save(); ctx.shadowColor = 'rgba(239,68,68,0.9)'; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(legX - 102, 84, 5, 0, Math.PI * 2); ctx.fillStyle = '#ef4444'; ctx.fill();
   ctx.restore();
-  ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '11px Jakarta400';
-  ctx.fillText('High Impact', PAD + 16, 156);
-  ctx.save();
-  ctx.shadowColor = 'rgba(234,179,8,0.9)'; ctx.shadowBlur = 10;
-  ctx.beginPath(); ctx.arc(PAD + 118, 152, 5, 0, Math.PI * 2); ctx.fillStyle = '#eab308'; ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px Jakarta400'; ctx.textAlign = 'left';
+  ctx.fillText('High Impact', legX - 93, 88);
+  ctx.save(); ctx.shadowColor = 'rgba(234,179,8,0.9)'; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(legX - 4, 84, 5, 0, Math.PI * 2); ctx.fillStyle = '#eab308'; ctx.fill();
   ctx.restore();
-  ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '11px Jakarta400';
-  ctx.fillText('Medium Impact', PAD + 128, 156);
+  ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px Jakarta400';
+  ctx.fillText('Medium', legX + 6, 88);
 
+  // Header rule
   const ruleG = ctx.createLinearGradient(PAD, 0, W - PAD, 0);
-  ruleG.addColorStop(0, 'rgba(255,255,255,0.2)');
-  ruleG.addColorStop(0.5, 'rgba(255,255,255,0.07)');
+  ruleG.addColorStop(0, 'rgba(255,255,255,0.18)');
+  ruleG.addColorStop(0.5, 'rgba(255,255,255,0.06)');
   ruleG.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.strokeStyle = ruleG; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(PAD, 170); ctx.lineTo(W - PAD, 170); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD, HEADER_H - 4); ctx.lineTo(W - PAD, HEADER_H - 4); ctx.stroke();
 
-  // Column labels
-  ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = '9px Jakarta400';
-  ctx.fillText('TIME', PAD + 22, 188);
-  ctx.fillText('EVENT', PAD + 124, 188);
-  ctx.textAlign = 'right';
-  ctx.fillText('FORECAST', W - PAD - 130, 188);
-  ctx.fillText('PREVIOUS', W - PAD, 188);
-  ctx.textAlign = 'left';
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.beginPath(); ctx.moveTo(PAD, 194); ctx.lineTo(W - PAD, 194); ctx.stroke();
+  // Day columns
+  for (let di = 0; di < 5; di++) {
+    const dayName = DAY_KEYS[di];
+    const cx = PAD + di * (DAY_W + GAP);
+    const evts = byDay[dayName];
 
-  if (shown.length === 0) {
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '14px Jakarta400';
-    ctx.fillText('No USD high/medium impact events this week.', PAD, 240);
-    return canvas.toBuffer('image/png');
-  }
+    // Card background
+    ctx.fillStyle = 'rgba(255,255,255,0.022)';
+    ctx.beginPath(); ctx.roundRect(cx, CARD_Y, DAY_W, CARD_H, 6); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.roundRect(cx, CARD_Y, DAY_W, CARD_H, 6); ctx.stroke();
 
-  let y = 198;
-
-  for (const dayKey of Object.keys(days)) {
-    const evts = days[dayKey];
-
-    ctx.fillStyle = 'rgba(255,255,255,0.028)';
-    ctx.fillRect(0, y, W, DAY_HEADER_H);
-    ctx.fillStyle = 'rgba(255,255,255,0.22)';
-    ctx.fillRect(0, y, 3, DAY_HEADER_H);
+    // Day header
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.beginPath(); ctx.roundRect(cx, CARD_Y, DAY_W, DAY_HEADER_H, [6, 6, 0, 0]); ctx.fill();
 
     ctx.save();
-    ctx.shadowColor = 'rgba(255,255,255,0.25)'; ctx.shadowBlur = 12;
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 16px Jakarta700';
-    ctx.fillText(dayKey, PAD, y + 40);
+    ctx.shadowColor = 'rgba(255,255,255,0.2)'; ctx.shadowBlur = 10;
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 13px Jakarta700';
+    ctx.fillText(dayName.toUpperCase(), cx + DAY_INNER_PAD, CARD_Y + 20);
     ctx.restore();
 
-    ctx.font = 'bold 16px Jakarta700';
-    const dayNameW = ctx.measureText(dayKey).width;
-    const badgeText = evts.length + ' event' + (evts.length > 1 ? 's' : '');
-    ctx.font = '10px Jakarta400';
-    const badgeW = ctx.measureText(badgeText).width + 20;
-    ctx.fillStyle = 'rgba(255,255,255,0.07)';
-    ctx.beginPath(); ctx.roundRect(PAD + dayNameW + 16, y + 22, badgeW, 20, 4); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.fillText(badgeText, PAD + dayNameW + 26, y + 36);
+    // Event count badge
+    const badgeText = evts.length ? `${evts.length} event${evts.length > 1 ? 's' : ''}` : 'No events';
+    ctx.font = '9px Jakarta400';
+    const bw = ctx.measureText(badgeText).width + 12;
+    ctx.fillStyle = evts.length ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)';
+    ctx.beginPath(); ctx.roundRect(cx + DAY_INNER_PAD, CARD_Y + 26, bw, 14, 3); ctx.fill();
+    ctx.fillStyle = evts.length ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.18)';
+    ctx.fillText(badgeText, cx + DAY_INNER_PAD + 6, CARD_Y + 37);
 
-    y += DAY_HEADER_H;
+    if (evts.length === 0) continue;
 
-    for (let i = 0; i < evts.length; i++) {
-      const e = evts[i];
+    const shown = evts.slice(0, MAX_PER_DAY);
+    const overflow = evts.length - shown.length;
+
+    let ey = CARD_Y + DAY_HEADER_H + 4;
+    for (const e of shown) {
       const isHigh = e.impact === 'High';
 
-      if (i % 2 === 0) {
-        ctx.fillStyle = 'rgba(255,255,255,0.013)';
-        ctx.fillRect(0, y, W, ROW_H);
-      }
-
+      // Impact dot
       ctx.save();
-      ctx.shadowColor = isHigh ? 'rgba(239,68,68,1)' : 'rgba(234,179,8,1)'; ctx.shadowBlur = 14;
-      ctx.beginPath(); ctx.arc(PAD + 8, y + ROW_H / 2, 5, 0, Math.PI * 2);
+      ctx.shadowColor = isHigh ? 'rgba(239,68,68,0.9)' : 'rgba(234,179,8,0.9)'; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.arc(cx + DAY_INNER_PAD + 4, ey + 13, 4, 0, Math.PI * 2);
       ctx.fillStyle = isHigh ? '#ef4444' : '#eab308'; ctx.fill();
       ctx.restore();
 
-      ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px Jakarta400';
-      ctx.fillText(fmtEventTime(e.date), PAD + 22, y + ROW_H / 2 + 4);
+      // Time
+      ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '9px Jakarta400';
+      ctx.fillText(fmtEventTime(e.date), cx + DAY_INNER_PAD + 14, ey + 11);
 
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(PAD + 110, y + 10); ctx.lineTo(PAD + 110, y + ROW_H - 10); ctx.stroke();
+      // Title — truncate to fit column width
+      ctx.font = (isHigh ? 'bold ' : '') + '11px Jakarta' + (isHigh ? '700' : '400');
+      ctx.fillStyle = isHigh ? '#ffffff' : 'rgba(255,255,255,0.72)';
+      const maxTitleW = DAY_W - DAY_INNER_PAD * 2 - 12;
+      let title = e.title;
+      while (ctx.measureText(title).width > maxTitleW && title.length > 4) title = title.slice(0, -2);
+      if (title.length < e.title.length) title = title.slice(0, -1) + '…';
+      ctx.fillText(title, cx + DAY_INNER_PAD + 12, ey + 25);
 
-      ctx.save();
-      if (isHigh) { ctx.shadowColor = 'rgba(255,255,255,0.15)'; ctx.shadowBlur = 8; }
-      ctx.fillStyle = isHigh ? '#ffffff' : 'rgba(255,255,255,0.7)';
-      ctx.font = (isHigh ? 'bold ' : '') + '14px Jakarta' + (isHigh ? '700' : '400');
-      ctx.fillText(e.title, PAD + 124, y + ROW_H / 2 + 5);
-      ctx.restore();
+      // Forecast / Previous — small line
+      if (e.forecast || e.previous) {
+        ctx.font = '9px Jakarta400';
+        const fStr = e.forecast ? `F: ${e.forecast}` : '';
+        const pStr = e.previous ? `P: ${e.previous}` : '';
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.fillText([fStr, pStr].filter(Boolean).join('  '), cx + DAY_INNER_PAD + 12, ey + 38);
+      }
 
-      ctx.textAlign = 'right';
-      ctx.fillStyle = e.forecast ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.15)';
-      ctx.font = '12px Jakarta400';
-      ctx.fillText(e.forecast || '—', W - PAD - 130, y + ROW_H / 2 + 4);
-      ctx.fillStyle = 'rgba(255,255,255,0.25)';
-      ctx.fillText(e.previous || '—', W - PAD, y + ROW_H / 2 + 4);
-      ctx.textAlign = 'left';
+      // Row divider
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(cx + 8, ey + ROW_H - 1); ctx.lineTo(cx + DAY_W - 8, ey + ROW_H - 1); ctx.stroke();
 
-      ctx.strokeStyle = 'rgba(255,255,255,0.045)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(PAD, y + ROW_H - 1); ctx.lineTo(W - PAD, y + ROW_H - 1); ctx.stroke();
-
-      y += ROW_H;
+      ey += ROW_H;
     }
-    y += SECTION_GAP;
+
+    // Overflow note
+    if (overflow > 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = 'italic 9px Jakarta400';
+      ctx.fillText(`+${overflow} more`, cx + DAY_INNER_PAD + 12, ey + 12);
+    }
   }
 
-  if (overflow > 0) {
-    ctx.fillStyle = 'rgba(255,255,255,0.09)';
-    ctx.beginPath(); ctx.roundRect(PAD, y + 4, W - PAD * 2, 22, 4); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = 'italic 11px Jakarta400';
-    ctx.fillText(`+ ${overflow} more medium-impact events not shown — only high-priority events displayed above`, PAD + 12, y + 19);
-    y += 30;
-  }
-
-  ctx.strokeStyle = ruleG; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(PAD, y + 12); ctx.lineTo(W - PAD, y + 12); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.13)'; ctx.font = 'italic 11px Jakarta300i';
-  ctx.fillText('Source: Investing.com  ·  USD events only  ·  High ● Red   Medium ● Yellow  ·  The Smart Money Paradigm', PAD, y + 32);
+  // Footer
+  const footY = H - FOOTER_H + 14;
+  ctx.strokeStyle = ruleG; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(PAD, footY); ctx.lineTo(W - PAD, footY); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.13)'; ctx.font = 'italic 10px Jakarta300i';
+  ctx.fillText('Source: Investing.com  ·  USD events only  ·  Based on TSMP news protocols  ·  The Smart Money Paradigm', PAD, footY + 18);
 
   return canvas.toBuffer('image/png');
 }
