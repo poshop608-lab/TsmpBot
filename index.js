@@ -980,8 +980,14 @@ function fmtEventTime(iso) {
 }
 
 async function buildEnvCalendarCard(events) {
+  // Sort High first within each day, cap total rows to keep card readable
+  const MAX_ROWS = 20;
+  const sorted = [...events].sort((a, b) => (a.impact === 'High' ? 0 : 1) - (b.impact === 'High' ? 0 : 1));
+  const shown = sorted.slice(0, MAX_ROWS);
+  const overflow = events.length - shown.length;
+
   const days = {};
-  for (const e of events) {
+  for (const e of shown) {
     const k = fmtEventDate(e.date);
     if (!days[k]) days[k] = [];
     days[k].push(e);
@@ -990,7 +996,7 @@ async function buildEnvCalendarCard(events) {
   const W = 980, PAD = 48, ROW_H = 54, DAY_HEADER_H = 64, SECTION_GAP = 24;
   let H = 210;
   for (const k of Object.keys(days)) H += DAY_HEADER_H + days[k].length * ROW_H + SECTION_GAP;
-  H += 70;
+  H += overflow ? 90 : 70;
   if (events.length === 0) H = 280;
 
   const canvas = createCanvas(W, H);
@@ -1062,7 +1068,7 @@ async function buildEnvCalendarCard(events) {
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.beginPath(); ctx.moveTo(PAD, 194); ctx.lineTo(W - PAD, 194); ctx.stroke();
 
-  if (events.length === 0) {
+  if (shown.length === 0) {
     ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '14px Jakarta400';
     ctx.fillText('No USD high/medium impact events this week.', PAD, 240);
     return canvas.toBuffer('image/png');
@@ -1140,10 +1146,18 @@ async function buildEnvCalendarCard(events) {
     y += SECTION_GAP;
   }
 
+  if (overflow > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.09)';
+    ctx.beginPath(); ctx.roundRect(PAD, y + 4, W - PAD * 2, 22, 4); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = 'italic 11px Jakarta400';
+    ctx.fillText(`+ ${overflow} more medium-impact events not shown — only high-priority events displayed above`, PAD + 12, y + 19);
+    y += 30;
+  }
+
   ctx.strokeStyle = ruleG; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(PAD, y + 12); ctx.lineTo(W - PAD, y + 12); ctx.stroke();
   ctx.fillStyle = 'rgba(255,255,255,0.13)'; ctx.font = 'italic 11px Jakarta300i';
-  ctx.fillText('Source: ForexFactory  ·  USD events only  ·  High ● Red   Medium ● Yellow  ·  The Smart Money Paradigm', PAD, y + 32);
+  ctx.fillText('Source: Investing.com  ·  USD events only  ·  High ● Red   Medium ● Yellow  ·  The Smart Money Paradigm', PAD, y + 32);
 
   return canvas.toBuffer('image/png');
 }
@@ -1157,15 +1171,19 @@ async function postEnvCalendar(guild, week = 'thisweek') {
   const cardBuffer = await buildEnvCalendarCard(events);
   const attachment = new AttachmentBuilder(cardBuffer, { name: 'env-calendar.png' });
 
+  const weekLabel = week === 'nextweek' ? 'Next Week' : 'This Week';
   const embed = new EmbedBuilder()
     .setColor(0x0a0a0a)
     .setDescription(
-      `**⌬ Economic Calendar — Weekly USD Events**\n\n` +
-      `*Know your environment before you trade it.*\n\n` +
-      `High & medium impact USD events for the week ahead. Plan around these — not through them.`
+      `**⌬ Economic Calendar — ${weekLabel} USD Events**\n\n` +
+      `**Know your environment before you trade it.**\n` +
+      `These are the high and medium impact USD events scheduled for the week. ` +
+      `Each release has the potential to shift price violently — plan around them, not through them.\n\n` +
+      `High impact events require full awareness. Medium impact can act as a catalyst or confirmation. ` +
+      `Review this at the start of the week and mark your levels accordingly.`
     )
     .setImage('attachment://env-calendar.png')
-    .setFooter({ text: 'The Smart Money Paradigm  ·  The market is engineered. Learn the engineering.' });
+    .setFooter({ text: 'The Smart Money Paradigm  ·  USD events only  ·  All times ET' });
 
   await ch.send({ content: `@everyone`, embeds: [embed], files: [attachment] });
 }
@@ -1185,15 +1203,18 @@ async function postEnvEngine(guild, { ping = true, week = 'thisweek' } = {}) {
   const cardBuffer = await buildEnvEngineCard(allEvents);
   const attachment = new AttachmentBuilder(cardBuffer, { name: 'env-engine.png' });
 
+  const envWeekLabel = week === 'nextweek' ? 'Next Week' : 'This Week';
   const headerEmbed = new EmbedBuilder()
     .setColor(0x0b0d10)
     .setDescription(
-      `**⌬ Environment Selection — Weekly Session Protocol**\n\n` +
-      `*Not every session is created equal. Know when to trade and when to stay flat.*\n\n` +
-      `Click a day below to see the full session breakdown, events, and execution protocol.`
+      `**⌬ Environment Selection — ${envWeekLabel} Session Protocol**\n\n` +
+      `**Not every session is worth trading. This tells you which ones are.**\n` +
+      `Each day is rated based on USD news events, market structure context, and session timing. ` +
+      `IDEAL means full size, clean execution. CAUTION means reduce exposure. AVOID means stay flat — no exceptions.\n\n` +
+      `Click a day below for the full breakdown — session ratings, execution notes, and what to watch for.`
     )
     .setImage('attachment://env-engine.png')
-    .setFooter({ text: 'The Smart Money Paradigm  ·  The market is engineered. Learn the engineering.' });
+    .setFooter({ text: 'The Smart Money Paradigm  ·  Session-by-Session Protocol  ·  All times ET' });
 
   await ch.send({
     content: ping ? `@everyone` : undefined,
@@ -1517,7 +1538,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const cardBuffer = await buildEnvCalendarCard(events);
         const attachment = new AttachmentBuilder(cardBuffer, { name: 'eco-calendar-test.png' });
-        await interaction.editReply({ content: `Preview for **${week}** (${events.length} events):`, files: [attachment] });
+        await interaction.editReply({
+          content: `**Economic Calendar preview — ${week}** · ${events.length} USD high/medium events\n*High impact shown first. Use \`/economic-calendar week:${week}\` to post publicly.*`,
+          files: [attachment],
+        });
       }
 
       if (commandName === 'env-engine') {
@@ -1651,7 +1675,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const attachment = new AttachmentBuilder(cardBuffer, { name: 'env-engine-test.png' });
 
         await interaction.editReply({
-          content: `**Environment Selection preview — ${week}**\nClick a day to see full breakdown.`,
+          content: `**Environment Selection preview — ${week}**\nSession ratings based on USD events and market context. Click a day for the full breakdown.`,
           files: [attachment],
           components: [buildDayButtons()],
         });
