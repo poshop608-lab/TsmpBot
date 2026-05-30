@@ -46,7 +46,16 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('economic-calendar')
-    .setDescription('Manually post this week\'s USD economic calendar'),
+    .setDescription('Post the USD economic calendar to the channel')
+    .addStringOption(opt =>
+      opt.setName('week')
+        .setDescription('Which week to post')
+        .setRequired(false)
+        .addChoices(
+          { name: 'This Week', value: 'thisweek' },
+          { name: 'Next Week', value: 'nextweek' },
+        )
+    ),
 
   new SlashCommandBuilder()
     .setName('test-economic-calendar')
@@ -128,7 +137,16 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('env-engine')
-    .setDescription('Manually post the Environment Engine session protocol card'),
+    .setDescription('Post the Environment Engine session protocol card to the channel')
+    .addStringOption(opt =>
+      opt.setName('week')
+        .setDescription('Which week to post')
+        .setRequired(false)
+        .addChoices(
+          { name: 'This Week', value: 'thisweek' },
+          { name: 'Next Week', value: 'nextweek' },
+        )
+    ),
 
   new SlashCommandBuilder()
     .setName('test-env-engine')

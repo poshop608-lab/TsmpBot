@@ -1148,12 +1148,12 @@ async function buildEnvCalendarCard(events) {
   return canvas.toBuffer('image/png');
 }
 
-async function postEnvCalendar(guild) {
+async function postEnvCalendar(guild, week = 'thisweek') {
   if (!ENV_CH_ID) return;
   const ch = guild.channels.cache.get(ENV_CH_ID);
   if (!ch) return;
 
-  const events = await fetchUSDEvents();
+  const events = await fetchUSDEvents(week);
   const cardBuffer = await buildEnvCalendarCard(events);
   const attachment = new AttachmentBuilder(cardBuffer, { name: 'env-calendar.png' });
 
@@ -1170,12 +1170,12 @@ async function postEnvCalendar(guild) {
   await ch.send({ content: `@everyone`, embeds: [embed], files: [attachment] });
 }
 
-async function postEnvEngine(guild, { ping = true } = {}) {
+async function postEnvEngine(guild, { ping = true, week = 'thisweek' } = {}) {
   if (!ENV_ENGINE_CH_ID) return;
   const ch = guild.channels.cache.get(ENV_ENGINE_CH_ID);
   if (!ch) return;
 
-  const allEvents = await fetchAllUSDEvents('thisweek');
+  const allEvents = await fetchAllUSDEvents(week);
   if (allEvents.length === 0) return;
 
   // Cache for button clicks
@@ -1497,8 +1497,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (!ENV_CH_ID) return interaction.editReply({ content: 'Run `/setup-economic-calendar` first to create the channel.' });
 
-        await postEnvCalendar(guild);
-        return interaction.editReply({ content: 'Economic calendar posted.' });
+        const week = interaction.options.getString('week') || 'thisweek';
+        await postEnvCalendar(guild, week);
+        return interaction.editReply({ content: `Economic calendar posted (${week}).` });
       }
 
       if (commandName === 'test-economic-calendar') {
@@ -1527,7 +1528,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (!ENV_CH_ID) return interaction.editReply({ content: 'Run `/setup-economic-calendar` first to create the channel.' });
 
-        await postEnvEngine(guild);
+        const week = interaction.options.getString('week') || 'thisweek';
+        await postEnvEngine(guild, { week });
         return interaction.editReply({ content: 'Environment Engine posted.' });
       }
 
