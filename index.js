@@ -425,12 +425,24 @@ function _nyDateStr(d) {
 
 function buildEnvEngineWeek(allEvents) {
   const dayMs = 86400000;
-  const todayStr = _nyDateStr(new Date());
-  const todayMid = new Date(todayStr + 'T12:00:00');
-  const jsDay = todayMid.getDay(); // 0=Sun,1=Mon,...,6=Sat
-  // If Sun/Sat, show next week's Mon; else show current week's Mon
-  const daysToMon = jsDay === 0 ? 1 : jsDay === 6 ? 2 : -(jsDay - 1);
-  const monMid = new Date(todayMid.getTime() + daysToMon * dayMs);
+
+  // Derive Monday from the events themselves — works regardless of what day it's called
+  let monMid;
+  const eventDates = allEvents.map(e => e.date ? e.date.split('T')[0] : '').filter(Boolean).sort();
+  if (eventDates.length) {
+    // Find the Monday of the week containing the earliest event
+    const firstEvent = new Date(eventDates[0] + 'T12:00:00');
+    const jsDay = firstEvent.getDay();
+    const daysToMon = jsDay === 0 ? 1 : jsDay === 6 ? 2 : -(jsDay - 1);
+    monMid = new Date(firstEvent.getTime() + daysToMon * dayMs);
+  } else {
+    // No events — fall back to calendar week
+    const todayStr = _nyDateStr(new Date());
+    const todayMid = new Date(todayStr + 'T12:00:00');
+    const jsDay = todayMid.getDay();
+    const daysToMon = jsDay === 0 ? 1 : jsDay === 6 ? 2 : -(jsDay - 1);
+    monMid = new Date(todayMid.getTime() + daysToMon * dayMs);
+  }
 
   const weekDays = [];
   for (let i = 0; i < 5; i++) {
@@ -736,13 +748,15 @@ async function getEnvWeekData() {
   const now = Date.now();
   if (_envWeekCache && (now - _envWeekCache.ts) < 12 * 60 * 60 * 1000) return _envWeekCache.weekData;
 
-  // On Sunday, thisweek is the past week — use nextweek instead
+  // On Sunday buildEnvEngineWeek shows NEXT week dates — must fetch nextweek events
+  // If nextweek not published yet, fall back to thisweek but buildEnvEngineWeek
+  // will show next week dates with no matches — so force thisweek dates via allEvents
   const dow = new Date().getDay(); // 0=Sun
-  const week = dow === 0 ? 'nextweek' : 'thisweek';
-  let allEvents = await fetchAllUSDEvents(week);
-
-  // Fallback: if nextweek not published yet, try thisweek
-  if (allEvents.length === 0 && week === 'nextweek') {
+  let allEvents;
+  if (dow === 0) {
+    allEvents = await fetchAllUSDEvents('nextweek');
+    if (!allEvents.length) allEvents = await fetchAllUSDEvents('thisweek');
+  } else {
     allEvents = await fetchAllUSDEvents('thisweek');
   }
 
