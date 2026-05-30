@@ -1040,20 +1040,20 @@ async function buildEnvCalendarCard(events) {
   ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px Jakarta400';
   ctx.fillText(weekLabel, PAD, 108);
 
-  // Legend — top right
-  const legX = W - PAD;
-  ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px Jakarta400';
+  // Legend — top right, fully inside canvas
+  ctx.font = '11px Jakarta400';
+  const legY2 = 86;
+  const leg2X = W - PAD - 160; // anchor so both items fit within W
   ctx.save(); ctx.shadowColor = 'rgba(239,68,68,0.9)'; ctx.shadowBlur = 8;
-  ctx.beginPath(); ctx.arc(legX - 102, 84, 5, 0, Math.PI * 2); ctx.fillStyle = '#ef4444'; ctx.fill();
+  ctx.beginPath(); ctx.arc(leg2X, legY2 - 3, 5, 0, Math.PI * 2); ctx.fillStyle = '#ef4444'; ctx.fill();
   ctx.restore();
-  ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px Jakarta400'; ctx.textAlign = 'left';
-  ctx.fillText('High Impact', legX - 93, 88);
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillText('High Impact', leg2X + 10, legY2 + 1);
   ctx.save(); ctx.shadowColor = 'rgba(234,179,8,0.9)'; ctx.shadowBlur = 8;
-  ctx.beginPath(); ctx.arc(legX - 4, 84, 5, 0, Math.PI * 2); ctx.fillStyle = '#eab308'; ctx.fill();
+  ctx.beginPath(); ctx.arc(leg2X + 100, legY2 - 3, 5, 0, Math.PI * 2); ctx.fillStyle = '#eab308'; ctx.fill();
   ctx.restore();
-  ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '11px Jakarta400';
-  ctx.fillText('Medium', legX + 6, 88);
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillText('Medium Impact', leg2X + 110, legY2 + 1);
 
   // Header rule
   const ruleG = ctx.createLinearGradient(PAD, 0, W - PAD, 0);
