@@ -1,6 +1,7 @@
 require('dotenv').config();
 const path = require('path');
 const express = require('express');
+const { XMLParser } = require('fast-xml-parser');
 const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
 const {
   Client,
@@ -1282,6 +1283,102 @@ let SWEEP_ROLE_ID = null;       // set by /setup-sweep-alerts
 let SWEEP_ALERT_CH_ID = null;   // #〢sweep-alerts
 let SWEEP_ROLES_CH_ID = null;   // #〢alert-roles (button to self-assign)
 
+// ── Macro News Feed ──
+const MACRO_NEWS_CH_ID = '1487871136875286538';
+const MACRO_POLL_MS = 5 * 60 * 1000; // every 5 min
+const seenGuids = new Set(); // dedupe — in-memory, clears on restart (fine)
+
+const MACRO_FEEDS = [
+  { name: 'Reuters Business',   url: 'https://feeds.reuters.com/reuters/businessNews' },
+  { name: 'Reuters World',      url: 'https://feeds.reuters.com/Reuters/worldNews' },
+  { name: 'AP News Economy',    url: 'https://rsshub.app/apnews/topics/economy' },
+  { name: 'MarketWatch',        url: 'https://feeds.marketwatch.com/marketwatch/topstories' },
+  { name: 'BBC Business',       url: 'https://feeds.bbci.co.uk/news/business/rss.xml' },
+  { name: 'CNBC Economy',       url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258' },
+];
+
+const MACRO_KEYWORDS = [
+  // Fed / monetary policy
+  'federal reserve','fed ','fomc','interest rate','rate hike','rate cut','rate decision',
+  'inflation','cpi','pce','gdp','nonfarm','payroll','unemployment','jobs report',
+  'powell','yellen','treasury','debt ceiling','fiscal',
+  // Geopolitical
+  'white house','pentagon','nato','sanctions','tariff','trade war',
+  'china','taiwan','iran','russia','ukraine','north korea','israel','gaza','opec',
+  'oil price','crude','energy crisis','war','attack','airstrike','conflict',
+  // Market macro
+  'recession','bank failure','banking crisis','credit','default','dollar','yen','euro',
+  'stock market','wall street','s&p','nasdaq','dow','selloff','rally','crash',
+  'silicon valley bank','svb','fed balance','quantitative','qe','qt',
+];
+
+function isMacroRelevant(title, desc) {
+  const text = (title + ' ' + (desc || '')).toLowerCase();
+  return MACRO_KEYWORDS.some(k => text.includes(k));
+}
+
+const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
+
+async function fetchRSSFeed(feed) {
+  try {
+    const res = await fetch(feed.url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TsmpBot/1.0)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const xml = await res.text();
+    const parsed = xmlParser.parse(xml);
+    const items = parsed?.rss?.channel?.item || parsed?.feed?.entry || [];
+    return (Array.isArray(items) ? items : [items]).map(item => ({
+      title:   item.title?.['#text'] || item.title || '',
+      link:    item.link?.['@_href'] || item.link || item.guid?.['#text'] || item.guid || '',
+      desc:    item.description || item.summary?.['#text'] || item.summary || '',
+      pubDate: item.pubDate || item.published || item.updated || '',
+      guid:    item.guid?.['#text'] || item.guid || item.id || item.link || '',
+      source:  feed.name,
+    }));
+  } catch { return []; }
+}
+
+const SOURCE_COLORS = {
+  'Reuters Business': 0xff8000,
+  'Reuters World':    0xff6600,
+  'AP News Economy':  0x0066cc,
+  'MarketWatch':      0x00a651,
+  'BBC Business':     0xbb1919,
+  'CNBC Economy':     0x005594,
+};
+
+async function pollMacroNews() {
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+  const ch = guild.channels.cache.get(MACRO_NEWS_CH_ID);
+  if (!ch) return;
+
+  for (const feed of MACRO_FEEDS) {
+    const items = await fetchRSSFeed(feed);
+    for (const item of items) {
+      if (!item.guid || seenGuids.has(item.guid)) continue;
+      seenGuids.add(item.guid);
+      if (!isMacroRelevant(item.title, item.desc)) continue;
+
+      const desc = item.desc
+        ? item.desc.replace(/<[^>]+>/g, '').slice(0, 300) + (item.desc.length > 300 ? '…' : '')
+        : '';
+
+      const embed = new EmbedBuilder()
+        .setColor(SOURCE_COLORS[item.source] || 0x888888)
+        .setTitle(item.title.slice(0, 256))
+        .setURL(item.link || null)
+        .setDescription(desc || null)
+        .setFooter({ text: `${item.source}  ·  ${item.pubDate ? new Date(item.pubDate).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' ET' : 'Just now'}` });
+
+      await ch.send({ embeds: [embed] }).catch(() => {});
+      await new Promise(r => setTimeout(r, 500)); // avoid rate limit
+    }
+  }
+}
+
 const LEVEL_LABELS = {
   PDH: 'Previous Day High', PDL: 'Previous Day Low',
   PWH: 'Previous Week High', PWL: 'Previous Week Low',
@@ -2263,6 +2360,15 @@ client.once(Events.ClientReady, () => {
     const sweepRolesCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
     if (sweepRolesCh) { SWEEP_ROLES_CH_ID = sweepRolesCh.id; }
   }
+
+  // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
+  setTimeout(() => {
+    pollMacroNews().catch(e => console.error('macro news poll err:', e.message));
+    setInterval(() => {
+      pollMacroNews().catch(e => console.error('macro news poll err:', e.message));
+    }, MACRO_POLL_MS);
+  }, 10000);
+  console.log('Macro news poller started (every 5 min)');
 
 });
 
