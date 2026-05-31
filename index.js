@@ -1297,24 +1297,58 @@ const MACRO_FEEDS = [
   { name: 'CNBC Economy',       url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258' },
 ];
 
-const MACRO_KEYWORDS = [
-  // Fed / monetary policy
-  'federal reserve','fed ','fomc','interest rate','rate hike','rate cut','rate decision',
-  'inflation','cpi','pce','gdp','nonfarm','payroll','unemployment','jobs report',
-  'powell','yellen','treasury','debt ceiling','fiscal',
-  // Geopolitical
-  'white house','pentagon','nato','sanctions','tariff','trade war',
-  'china','taiwan','iran','russia','ukraine','north korea','israel','gaza','opec',
-  'oil price','crude','energy crisis','war','attack','airstrike','conflict',
-  // Market macro
-  'recession','bank failure','banking crisis','credit','default','dollar','yen','euro',
-  'stock market','wall street','s&p','nasdaq','dow','selloff','rally','crash',
-  'silicon valley bank','svb','fed balance','quantitative','qe','qt',
+// HIGH impact — major market movers, must be title-only match
+const MACRO_HIGH = [
+  'federal reserve','fomc','rate decision','rate hike','rate cut','interest rate',
+  'nonfarm payroll','jobs report','cpi','inflation report','pce','gdp report',
+  'recession','bank failure','banking crisis','debt ceiling','default',
+  'powell','yellen','treasury secretary',
+  'war declared','nuclear','invasion','airstrike on','attacked','strike on',
+  'opec cut','opec hike','oil embargo','sanctions on',
+  'market crash','circuit breaker','trading halt','black monday','stock crash',
+  'fed chair','emergency rate','quantitative easing','quantitative tightening',
 ];
 
-function isMacroRelevant(title, desc) {
-  const text = (title + ' ' + (desc || '')).toLowerCase();
-  return MACRO_KEYWORDS.some(k => text.includes(k));
+// MEDIUM impact — geopolitical/macro context, title OR desc match
+const MACRO_MEDIUM = [
+  'white house','pentagon','nato','g7','g20','imf','world bank',
+  'tariff','trade war','trade deal','sanctions','export ban',
+  'china economy','china gdp','china trade','taiwan strait','south china sea',
+  'iran nuclear','iran sanctions','russia ukraine','ukraine war',
+  'israel','gaza','middle east tension','north korea',
+  'oil price','crude oil','energy crisis','natural gas price',
+  'dollar index','dxy','yen','euro zone','ecb','bank of england','boj',
+  'selloff','market rally','dow jones','s&p 500','nasdaq','wall street',
+  'unemployment rate','jobless claims','retail sales','manufacturing pmi',
+  'debt crisis','credit downgrade','sovereign debt','bond yield','10-year',
+  'silicon valley bank','svb','credit suisse','lehman',
+  'crypto crash','bitcoin','ethereum','stablecoin',
+];
+
+// EXCLUDE — blocks unrelated articles even if a keyword matches
+const MACRO_EXCLUDE = [
+  'sports','football','soccer','basketball','tennis','golf','olympic',
+  'celebrity','oscar','grammy','emmy','awards','music','film','movie','album',
+  'recipe','food','travel','fashion','lifestyle','health tips','diet','workout',
+  'weather','hurricane','earthquake','flood','wildfire',// natural disasters ok only if market relevant
+  'obituary','funeral','wedding','birth','death of','passed away',
+  'real estate listing','home for sale','mortgage rate tips',
+];
+
+function classifyNews(title, desc) {
+  const titleL = title.toLowerCase();
+  const fullL  = (title + ' ' + (desc || '')).toLowerCase();
+
+  // Hard exclude first
+  if (MACRO_EXCLUDE.some(k => fullL.includes(k))) return null;
+
+  // High — title match only (stricter)
+  if (MACRO_HIGH.some(k => titleL.includes(k))) return 'HIGH';
+
+  // Medium — title or desc match
+  if (MACRO_MEDIUM.some(k => fullL.includes(k))) return 'MEDIUM';
+
+  return null; // not relevant
 }
 
 const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
@@ -1360,21 +1394,32 @@ async function pollMacroNews() {
     for (const item of items) {
       if (!item.guid || seenGuids.has(item.guid)) continue;
       seenGuids.add(item.guid);
-      if (!isMacroRelevant(item.title, item.desc)) continue;
 
-      const desc = item.desc
-        ? item.desc.replace(/<[^>]+>/g, '').slice(0, 300) + (item.desc.length > 300 ? '…' : '')
+      const impact = classifyNews(item.title, item.desc);
+      if (!impact) continue;
+
+      const isHigh = impact === 'HIGH';
+      const impactBadge = isHigh ? '🔴 HIGH IMPACT' : '🟡 MEDIUM IMPACT';
+      const embedColor = isHigh ? 0xef4444 : 0xfbbf24;
+
+      const cleanDesc = item.desc
+        ? item.desc.replace(/<[^>]+>/g, '').replace(/&[a-z]+;/gi, ' ').trim().slice(0, 280)
         : '';
 
+      const timeStr = item.pubDate
+        ? new Date(item.pubDate).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' ET'
+        : 'Just now';
+
       const embed = new EmbedBuilder()
-        .setColor(SOURCE_COLORS[item.source] || 0x888888)
+        .setColor(embedColor)
+        .setAuthor({ name: `${impactBadge}  ·  ${item.source}` })
         .setTitle(item.title.slice(0, 256))
         .setURL(item.link || null)
-        .setDescription(desc || null)
-        .setFooter({ text: `${item.source}  ·  ${item.pubDate ? new Date(item.pubDate).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' ET' : 'Just now'}` });
+        .setDescription(cleanDesc ? cleanDesc + (item.desc?.length > 280 ? '…' : '') : null)
+        .setFooter({ text: `${timeStr}  ·  The Smart Money Paradigm` });
 
       await ch.send({ embeds: [embed] }).catch(() => {});
-      await new Promise(r => setTimeout(r, 500)); // avoid rate limit
+      await new Promise(r => setTimeout(r, 500));
     }
   }
 }
