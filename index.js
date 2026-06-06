@@ -538,7 +538,9 @@ async function buildEnvEngineCard(allEvents) {
   ctx.fillText('Environment Engine', PAD, 92);
   ctx.restore();
 
-  const weekLabel = 'Session-by-Session Trading Protocol  ·  Week of ' + new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }) + '  ·  All times ET';
+  const eventDatesEnv = allEvents.map(e => e.date ? e.date.slice(0,10) : '').filter(Boolean).sort();
+  const weekStartEnv = eventDatesEnv.length ? new Date(eventDatesEnv[0] + 'T12:00:00Z') : new Date();
+  const weekLabel = 'Session-by-Session Trading Protocol  ·  Week of ' + weekStartEnv.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }) + '  ·  All times ET';
   ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px Jakarta400';
   ctx.fillText(weekLabel, PAD, 118);
 
@@ -1038,7 +1040,9 @@ async function buildEnvCalendarCard(events) {
   ctx.fillText('Economic Calendar', PAD, 84);
   ctx.restore();
 
-  const weekLabel = 'USD High & Medium Impact Events  ·  Week of ' + new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }) + '  ·  All times ET';
+  const eventDatesEco = events.map(e => e.date ? e.date.slice(0,10) : '').filter(Boolean).sort();
+  const weekStartEco = eventDatesEco.length ? new Date(eventDatesEco[0] + 'T12:00:00Z') : new Date();
+  const weekLabel = 'USD High & Medium Impact Events  ·  Week of ' + weekStartEco.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }) + '  ·  All times ET';
   ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '12px Jakarta400';
   ctx.fillText(weekLabel, PAD, 108);
 
