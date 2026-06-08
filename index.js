@@ -1480,31 +1480,38 @@ async function _yfRefreshAuth() {
   const https = require('https');
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+  const wrapErr = e => new Error(e?.message || e?.code || JSON.stringify(e) || 'unknown error');
+
   const cookie = await new Promise((resolve, reject) => {
-    const req = https.get('https://finance.yahoo.com/quote/NQ%3DF/', { headers: { 'User-Agent': UA } }, (res) => {
-      const setCookie = res.headers['set-cookie'] || [];
-      const a1 = setCookie.find(c => c.startsWith('A1='));
-      res.resume();
-      if (a1) resolve(a1.split(';')[0]);
-      else reject(new Error('No A1 cookie'));
-    });
-    req.on('error', reject);
-    req.setTimeout(10000, () => { req.destroy(); reject(new Error('cookie timeout')); });
+    try {
+      const req = https.get('https://finance.yahoo.com/quote/NQ%3DF/', { headers: { 'User-Agent': UA } }, (res) => {
+        const setCookie = res.headers['set-cookie'] || [];
+        const a1 = setCookie.find(c => c.startsWith('A1='));
+        res.resume();
+        if (a1) resolve(a1.split(';')[0]);
+        else reject(new Error('No A1 cookie in response'));
+      });
+      req.on('error', e => reject(wrapErr(e)));
+      req.setTimeout(12000, () => { req.destroy(); reject(new Error('cookie request timeout')); });
+    } catch (e) { reject(wrapErr(e)); }
   });
 
   const crumb = await new Promise((resolve, reject) => {
-    const req = https.get('https://query2.finance.yahoo.com/v1/test/getcrumb', {
-      headers: { 'User-Agent': UA, 'Cookie': cookie }
-    }, (res) => {
-      let d = '';
-      res.on('data', c => d += c);
-      res.on('end', () => {
-        if (d && !d.includes('{')) resolve(d.trim());
-        else reject(new Error('bad crumb: ' + d));
+    try {
+      const req = https.get('https://query2.finance.yahoo.com/v1/test/getcrumb', {
+        headers: { 'User-Agent': UA, 'Cookie': cookie }
+      }, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => {
+          const t = d.trim();
+          if (t && !t.startsWith('{')) resolve(t);
+          else reject(new Error('bad crumb response: ' + t.slice(0, 80)));
+        });
       });
-    });
-    req.on('error', reject);
-    req.setTimeout(10000, () => { req.destroy(); reject(new Error('crumb timeout')); });
+      req.on('error', e => reject(wrapErr(e)));
+      req.setTimeout(12000, () => { req.destroy(); reject(new Error('crumb request timeout')); });
+    } catch (e) { reject(wrapErr(e)); }
   });
 
   _yfCookie = cookie;
@@ -1770,15 +1777,16 @@ async function _pollNQSweeps() {
 // ── Macro News Feed ──
 const MACRO_NEWS_CH_ID = '1487871136875286538';
 const MACRO_POLL_MS = 5 * 60 * 1000; // every 5 min
-const seenGuids = new Set(); // dedupe — in-memory, clears on restart (fine)
+const seenGuids = new Set();
+let _newsBootTime = null; // set on first poll — skip articles older than 30min at startup
 
 const MACRO_FEEDS = [
-  { name: 'Reuters Business',   url: 'https://feeds.reuters.com/reuters/businessNews' },
-  { name: 'Reuters World',      url: 'https://feeds.reuters.com/Reuters/worldNews' },
-  { name: 'AP News Economy',    url: 'https://rsshub.app/apnews/topics/economy' },
-  { name: 'MarketWatch',        url: 'https://feeds.marketwatch.com/marketwatch/topstories' },
-  { name: 'BBC Business',       url: 'https://feeds.bbci.co.uk/news/business/rss.xml' },
-  { name: 'CNBC Economy',       url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258' },
+  { name: 'MarketWatch',     url: 'https://feeds.marketwatch.com/marketwatch/topstories' },
+  { name: 'BBC Business',    url: 'https://feeds.bbci.co.uk/news/business/rss.xml' },
+  { name: 'CNBC Economy',    url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258' },
+  { name: 'CNBC Markets',    url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069' },
+  { name: 'Investing.com',   url: 'https://www.investing.com/rss/news.rss' },
+  { name: 'FXStreet',        url: 'https://www.fxstreet.com/rss/news' },
 ];
 
 // HIGH impact — major market movers, must be title-only match
@@ -1873,10 +1881,27 @@ async function pollMacroNews() {
   const ch = guild.channels.cache.get(MACRO_NEWS_CH_ID);
   if (!ch) return;
 
+  const now = Date.now();
+  const isFirstRun = _newsBootTime === null;
+  if (isFirstRun) _newsBootTime = now;
+  // On first run skip anything older than 30 min — prevents startup flood
+  const cutoff = isFirstRun ? now - 30 * 60 * 1000 : now - 24 * 60 * 60 * 1000;
+
   for (const feed of MACRO_FEEDS) {
     const items = await fetchRSSFeed(feed);
     for (const item of items) {
-      if (!item.guid || seenGuids.has(item.guid)) continue;
+      if (!item.guid) continue;
+
+      // Age filter — skip old articles
+      if (item.pubDate) {
+        const age = new Date(item.pubDate).getTime();
+        if (!age || age < cutoff) {
+          seenGuids.add(item.guid); // mark seen so they don't post later
+          continue;
+        }
+      }
+
+      if (seenGuids.has(item.guid)) continue;
       seenGuids.add(item.guid);
 
       const impact = classifyNews(item.title, item.desc);
@@ -1890,8 +1915,9 @@ async function pollMacroNews() {
         ? item.desc.replace(/<[^>]+>/g, '').replace(/&[a-z]+;/gi, ' ').trim().slice(0, 280)
         : '';
 
-      const timeStr = item.pubDate
-        ? new Date(item.pubDate).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' ET'
+      const pubMs = item.pubDate ? new Date(item.pubDate).getTime() : null;
+      const timeStr = pubMs
+        ? `<t:${Math.floor(pubMs / 1000)}:R> · ` + new Date(pubMs).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' ET'
         : 'Just now';
 
       const embed = new EmbedBuilder()
@@ -3185,19 +3211,21 @@ client.once(Events.ClientReady, () => {
     }
   })();
 
-  // Start NQ sweep monitor — auth first, then levels, then poll every 30s
-  _yfRefreshAuth().then(() => {
-    // Refresh cookie+crumb every 6 hours
-    setInterval(() => {
-      _yfRefreshAuth().catch(e => console.warn('YF auth refresh failed:', e.message));
-    }, 6 * 60 * 60 * 1000);
-    return _refreshNQLevels();
-  }).then(() => {
-    setInterval(() => {
-      _pollNQSweeps().catch(e => console.warn('sweep poll err:', e.message));
-    }, SWEEP_POLL_MS);
-    console.log('NQ sweep monitor started (every 30s, ~10min data delay)');
-  }).catch(e => console.warn('NQ monitor init failed:', e.message));
+  // Start NQ sweep monitor — auth first (non-fatal), then poll every 30s
+  _yfRefreshAuth()
+    .then(() => _refreshNQLevels())
+    .catch(e => console.warn('NQ init warning (will retry on poll):', e?.message || e?.code || String(e)));
+
+  // Refresh cookie+crumb every 6 hours
+  setInterval(() => {
+    _yfRefreshAuth().catch(e => console.warn('YF auth refresh failed:', e?.message || String(e)));
+  }, 6 * 60 * 60 * 1000);
+
+  // Poll every 30s regardless — _fetchNQCandles retries auth internally on each failure
+  setInterval(() => {
+    _pollNQSweeps().catch(e => console.warn('sweep poll err:', e?.message || String(e)));
+  }, SWEEP_POLL_MS);
+  console.log('NQ sweep monitor started (every 30s, ~10min data delay)');
 
   // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
   setTimeout(() => {
