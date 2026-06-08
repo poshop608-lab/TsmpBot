@@ -1285,9 +1285,331 @@ let ENV_CH_ID = null;
 
 // ── Sweep Alerts ──
 const SWEEP_WEBHOOK_SECRET = process.env.SWEEP_SECRET || 'tsmp_sweep_secret';
-let SWEEP_ROLE_ID = null;       // set by /setup-sweep-alerts
-let SWEEP_ALERT_CH_ID = null;   // #〢sweep-alerts
-let SWEEP_ROLES_CH_ID = null;   // #〢alert-roles (button to self-assign)
+let SWEEP_TC_ROLE_ID   = null;  // 📈 Time Cycle Alerts role
+let SWEEP_QT_ROLE_ID   = null;  // 📐 QT Theory Alerts role
+let SWEEP_ALERT_CH_ID  = null;  // #📡〢sweep-alerts channel
+let SWEEP_ROLES_CH_ID  = null;  // #🔔〢alert-roles channel
+
+// ── NQ Price Monitor ──
+// Yahoo Finance: ~30s lag during market hours, ~10min outside
+const SWEEP_POLL_MS = 30 * 1000;
+const NQ_SYMBOL = 'NQ=F';
+
+// Tracked static levels — refreshed daily/weekly/monthly
+let _nqLevels = {
+  pdh: null, pdl: null,   // Previous Day H/L
+  pwh: null, pwl: null,   // Previous Week H/L
+  pmh: null, pml: null,   // Previous Month H/L
+  premh: null, preml: null, // Pre-Market H/L (07:00-09:30 ET)
+};
+
+// QT Theory — 90-min Q block H/L (built during block, alerted next block)
+// Keys: qt_asia_q1, qt_asia_q2, qt_asia_q3, qt_lon_q1 ... qt_nypm_q3
+// Each: { h, l, stored }
+let _qtBlocks = {};
+
+// Time Cycle — session H/L (built during session, alerted next session)
+// Keys: tc_asia, tc_london, tc_nyam, tc_nypm
+let _tcSessions = {};
+
+// One-shot fired flags
+let _swept = {};
+let _lastSweepDay  = null;
+let _lastSweepWeek = null;
+let _lastSweepMonth = null;
+
+function _nyTime() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+
+function _nyHM() {
+  const t = _nyTime();
+  return t.getHours() * 60 + t.getMinutes();
+}
+
+// QT Theory time blocks — 90-min quarters per session, anchored at 18:00 NY
+// Returns { session, q } or null
+function _qtBlock() {
+  const hm = _nyHM();
+  // Asia:   18:00-19:30(Q1) 19:30-21:00(Q2) 21:00-22:30(Q3) 22:30-00:00(Q4)
+  if (hm >= 1080 && hm < 1170) return { session: 'asia',  q: 1 };
+  if (hm >= 1170 && hm < 1260) return { session: 'asia',  q: 2 };
+  if (hm >= 1260 && hm < 1350) return { session: 'asia',  q: 3 };
+  if (hm >= 1350)               return { session: 'asia',  q: 4 };
+  // London: 00:00-01:30(Q1) 01:30-03:00(Q2) 03:00-04:30(Q3) 04:30-06:00(Q4)
+  if (hm >= 0   && hm < 90)  return { session: 'london', q: 1 };
+  if (hm >= 90  && hm < 180) return { session: 'london', q: 2 };
+  if (hm >= 180 && hm < 270) return { session: 'london', q: 3 };
+  if (hm >= 270 && hm < 360) return { session: 'london', q: 4 };
+  // NY AM:  06:00-07:30(Q1) 07:30-09:00(Q2) 09:00-10:30(Q3) 10:30-12:00(Q4)
+  if (hm >= 360 && hm < 450) return { session: 'nyam',   q: 1 };
+  if (hm >= 450 && hm < 540) return { session: 'nyam',   q: 2 };
+  if (hm >= 540 && hm < 630) return { session: 'nyam',   q: 3 };
+  if (hm >= 630 && hm < 720) return { session: 'nyam',   q: 4 };
+  // NY PM:  12:00-13:30(Q1) 13:30-15:00(Q2) 15:00-16:30(Q3) 16:30-18:00(Q4)
+  if (hm >= 720 && hm < 810) return { session: 'nypm',   q: 1 };
+  if (hm >= 810 && hm < 900) return { session: 'nypm',   q: 2 };
+  if (hm >= 900 && hm < 990) return { session: 'nypm',   q: 3 };
+  if (hm >= 990 && hm < 1080)return { session: 'nypm',   q: 4 };
+  return null;
+}
+
+// Time Cycle sessions (transcript timings)
+function _tcSession() {
+  const hm = _nyHM();
+  if (hm >= 1080 || hm < 150) return 'asia';    // 18:00-02:30
+  if (hm >= 150  && hm < 420) return 'london';  // 02:30-07:00
+  if (hm >= 420  && hm < 690) return 'nyam';    // 07:00-11:30
+  if (hm >= 690  && hm < 960) return 'nypm';    // 11:30-16:00
+  return null;
+}
+
+// True Open times (QT Theory) — price at Q2 open of each session
+const QT_TRUE_OPENS = {
+  tao: 19 * 60 + 30,  // Asia Q2  — 19:30 NY
+  tlo: 1  * 60 + 30,  // London Q2 — 01:30 NY
+  tny: 7  * 60 + 30,  // NY AM Q2  — 07:30 NY
+  tpm: 13 * 60 + 30,  // NY PM Q2  — 13:30 NY
+};
+let _trueOpens = { tao: null, tlo: null, tny: null, tpm: null };
+let _trueOpenFired = {};
+
+async function _fetchNQCandles(range, interval) {
+  const https = require('https');
+  return new Promise((resolve, reject) => {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${NQ_SYMBOL}?interval=${interval}&range=${range}`;
+    https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(d).chart.result[0]); }
+        catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function _refreshNQLevels() {
+  try {
+    // PDH/PDL — 5d daily, second-to-last candle
+    const daily = await _fetchNQCandles('5d', '1d');
+    const dh = daily.indicators.quote[0].high;
+    const dl = daily.indicators.quote[0].low;
+    if (dh.length >= 2) {
+      _nqLevels.pdh = dh[dh.length - 2];
+      _nqLevels.pdl = dl[dl.length - 2];
+    }
+    // PWH/PWL — 3mo weekly, second-to-last candle
+    const weekly = await _fetchNQCandles('3mo', '1wk');
+    const wh = weekly.indicators.quote[0].high;
+    const wl = weekly.indicators.quote[0].low;
+    if (wh.length >= 2) {
+      _nqLevels.pwh = wh[wh.length - 2];
+      _nqLevels.pwl = wl[wl.length - 2];
+    }
+    // PMH/PML — 1y monthly, second-to-last candle
+    const monthly = await _fetchNQCandles('1y', '1mo');
+    const mh = monthly.indicators.quote[0].high;
+    const ml = monthly.indicators.quote[0].low;
+    if (mh.length >= 2) {
+      _nqLevels.pmh = mh[mh.length - 2];
+      _nqLevels.pml = ml[ml.length - 2];
+    }
+    console.log('NQ levels refreshed:', JSON.stringify(_nqLevels));
+  } catch (e) { console.warn('NQ level refresh failed:', e.message); }
+}
+
+async function _pollNQSweeps() {
+  if (!SWEEP_ALERT_CH_ID) return;
+  if (!SWEEP_TC_ROLE_ID && !SWEEP_QT_ROLE_ID) return;
+
+  try {
+    const result = await _fetchNQCandles('1d', '1m');
+    const quotes = result.indicators.quote[0];
+    const timestamps = result.timestamp;
+    if (!timestamps || !timestamps.length) return;
+
+    const lastIdx = timestamps.length - 1;
+    const high  = quotes.high[lastIdx];
+    const low   = quotes.low[lastIdx];
+    const price = quotes.close[lastIdx] || high;
+    if (!high || !low) return;
+
+    const ny    = _nyTime();
+    const hm    = _nyHM();
+    const today = ny.toDateString();
+    const weekN = `${ny.getFullYear()}-W${ny.getDay() === 0 ? Math.ceil(ny.getDate()/7)-1 : Math.ceil(ny.getDate()/7)}`;
+    const monthN = `${ny.getFullYear()}-${ny.getMonth()}`;
+
+    // ── Daily reset ──
+    if (_lastSweepDay !== today) {
+      _lastSweepDay = today;
+      // Clear daily-scoped flags
+      Object.keys(_swept).filter(k =>
+        ['pdh','pdl','prem'].some(p => k.startsWith(p)) ||
+        k.startsWith('tc_') || k.startsWith('qt_') ||
+        k.startsWith('to_') || k.startsWith('sess_')
+      ).forEach(k => delete _swept[k]);
+      _qtBlocks = {};
+      _tcSessions = {};
+      _trueOpens = { tao: null, tlo: null, tny: null, tpm: null };
+      _trueOpenFired = {};
+      _nqLevels.premh = null;
+      _nqLevels.preml = null;
+      await _refreshNQLevels();
+    }
+
+    // ── Weekly reset ──
+    if (_lastSweepWeek !== weekN) {
+      _lastSweepWeek = weekN;
+      ['pwh','pwl'].forEach(k => delete _swept[k]);
+    }
+
+    // ── Monthly reset ──
+    if (_lastSweepMonth !== monthN) {
+      _lastSweepMonth = monthN;
+      ['pmh','pml'].forEach(k => delete _swept[k]);
+    }
+
+    const guild = client.guilds.cache.first();
+    if (!guild) return;
+    const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
+    if (!ch) return;
+
+    // roleIds: array of role IDs to ping — 'both', 'tc', 'qt'
+    async function fireAlert(key, label, direction, lvlPrice, roleType) {
+      if (_swept[key]) return;
+      _swept[key] = true;
+      const emoji   = direction === 'above' ? '🔼' : '🔽';
+      const color   = direction === 'above' ? 0x22d3ee : 0xf87171;
+      const dirText = direction === 'above' ? 'Swept Above' : 'Swept Below';
+      const rolePings = [];
+      if ((roleType === 'both' || roleType === 'tc') && SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
+      if ((roleType === 'both' || roleType === 'qt') && SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
+      if (!rolePings.length) return;
+      const roleTag = roleType === 'both' ? '📈 TC  📐 QT' : roleType === 'tc' ? '📈 Time Cycle' : '📐 QT Theory';
+      const embed = new EmbedBuilder()
+        .setColor(color)
+        .setAuthor({ name: `${emoji} NQ Sweep — ${label} ${dirText}` })
+        .setDescription(`**${label}** at **${lvlPrice.toFixed(2)}** swept.\nCurrent price: **${price.toFixed(2)}**`)
+        .addFields(
+          { name: 'Level', value: label, inline: true },
+          { name: 'Price', value: lvlPrice.toFixed(2), inline: true },
+          { name: 'Theory', value: roleTag, inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: '~10–30s delay during market hours · TSMP Sweep Monitor' });
+      await ch.send({ content: rolePings.join(' '), embeds: [embed] });
+      console.log(`Sweep: ${key} ${dirText} @ ${lvlPrice}`);
+    }
+
+    // ── UNIVERSAL LEVELS (both roles) ──
+    const { pdh, pdl, pwh, pwl, pmh, pml, premh, preml } = _nqLevels;
+    if (pdh  && high > pdh)  await fireAlert('pdh',   'PDH (Prev Day High)',    'above', pdh,   'both');
+    if (pdl  && low  < pdl)  await fireAlert('pdl',   'PDL (Prev Day Low)',     'below', pdl,   'both');
+    if (pwh  && high > pwh)  await fireAlert('pwh',   'PWH (Prev Week High)',   'above', pwh,   'both');
+    if (pwl  && low  < pwl)  await fireAlert('pwl',   'PWL (Prev Week Low)',    'below', pwl,   'both');
+    if (pmh  && high > pmh)  await fireAlert('pmh',   'PMH (Prev Month High)',  'above', pmh,   'both');
+    if (pml  && low  < pml)  await fireAlert('pml',   'PML (Prev Month Low)',   'below', pml,   'both');
+    if (premh && high > premh) await fireAlert('premh', 'PreMH (Pre-Mkt High)', 'above', premh, 'both');
+    if (preml && low  < preml) await fireAlert('preml', 'PreML (Pre-Mkt Low)',  'below', preml, 'both');
+
+    // ── BUILD PRE-MARKET H/L (07:00-09:30 ET) ──
+    if (hm >= 420 && hm < 570) {
+      _nqLevels.premh = _nqLevels.premh === null ? high : Math.max(_nqLevels.premh, high);
+      _nqLevels.preml = _nqLevels.preml === null ? low  : Math.min(_nqLevels.preml, low);
+    }
+
+    // ── TIME CYCLE — cross-session PXH/PXL ──
+    // Sessions: asia 18:00-02:30, london 02:30-07:00, nyam 07:00-11:30, nypm 11:30-16:00
+    const TC_SESSIONS = [
+      { key: 'asia',   start: 1080, end: 150,  label: 'Asia',        alertDuring: 'london' },
+      { key: 'london', start: 150,  end: 420,  label: 'London',      alertDuring: 'nyam'   },
+      { key: 'nyam',   start: 420,  end: 690,  label: 'NY Morning',  alertDuring: 'nypm'   },
+    ];
+
+    const curTCSess = _tcSession();
+
+    for (const sess of TC_SESSIONS) {
+      // Build H/L while inside session
+      const inSess = sess.start > sess.end
+        ? (hm >= sess.start || hm < sess.end)   // wraps midnight (asia)
+        : (hm >= sess.start && hm < sess.end);
+      if (inSess) {
+        if (!_tcSessions[sess.key]) _tcSessions[sess.key] = { h: null, l: null };
+        const sd = _tcSessions[sess.key];
+        sd.h = sd.h === null ? high : Math.max(sd.h, high);
+        sd.l = sd.l === null ? low  : Math.min(sd.l, low);
+      }
+      // Alert when inside the alertDuring session and levels exist
+      if (curTCSess === sess.alertDuring && _tcSessions[sess.key]) {
+        const sd = _tcSessions[sess.key];
+        if (sd.h && high > sd.h) await fireAlert(`tc_${sess.key}_h`, `${sess.label} High (TC)`, 'above', sd.h, 'tc');
+        if (sd.l && low  < sd.l) await fireAlert(`tc_${sess.key}_l`, `${sess.label} Low (TC)`,  'below', sd.l, 'tc');
+      }
+    }
+
+    // ── QT THEORY — 90-min Q block PXH/PXL ──
+    const curQT = _qtBlock();
+
+    const QT_BLOCKS = [
+      { session: 'asia',   q: 1, start: 1080, end: 1170 },
+      { session: 'asia',   q: 2, start: 1170, end: 1260 },
+      { session: 'asia',   q: 3, start: 1260, end: 1350 },
+      { session: 'london', q: 1, start: 0,    end: 90   },
+      { session: 'london', q: 2, start: 90,   end: 180  },
+      { session: 'london', q: 3, start: 180,  end: 270  },
+      { session: 'nyam',   q: 1, start: 360,  end: 450  },
+      { session: 'nyam',   q: 2, start: 450,  end: 540  },
+      { session: 'nyam',   q: 3, start: 540,  end: 630  },
+      { session: 'nypm',   q: 1, start: 720,  end: 810  },
+      { session: 'nypm',   q: 2, start: 810,  end: 900  },
+      { session: 'nypm',   q: 3, start: 900,  end: 990  },
+    ];
+
+    const SESS_LABELS_QT = { asia: 'Asia', london: 'London', nyam: 'NY AM', nypm: 'NY PM' };
+
+    for (const blk of QT_BLOCKS) {
+      const bKey = `${blk.session}_q${blk.q}`;
+      const inBlk = blk.start > blk.end
+        ? (hm >= blk.start || hm < blk.end)
+        : (hm >= blk.start && hm < blk.end);
+
+      // Build H/L while inside block
+      if (inBlk) {
+        if (!_qtBlocks[bKey]) _qtBlocks[bKey] = { h: null, l: null };
+        const bd = _qtBlocks[bKey];
+        bd.h = bd.h === null ? high : Math.max(bd.h, high);
+        bd.l = bd.l === null ? low  : Math.min(bd.l, low);
+      }
+
+      // Alert during the NEXT block (same session, q+1)
+      const isNextBlock = curQT && curQT.session === blk.session && curQT.q === blk.q + 1;
+      if (isNextBlock && _qtBlocks[bKey]) {
+        const bd = _qtBlocks[bKey];
+        const sLabel = SESS_LABELS_QT[blk.session];
+        if (bd.h && high > bd.h) await fireAlert(`qt_${bKey}_h`, `${sLabel} Q${blk.q} High (QT)`, 'above', bd.h, 'qt');
+        if (bd.l && low  < bd.l) await fireAlert(`qt_${bKey}_l`, `${sLabel} Q${blk.q} Low (QT)`,  'below', bd.l, 'qt');
+      }
+    }
+
+    // ── QT TRUE OPENS — TAO/TLO/TNY/TPM swept ──
+    // Capture price at true open time
+    for (const [key, openHM] of Object.entries(QT_TRUE_OPENS)) {
+      if (hm >= openHM && hm < openHM + 2 && !_trueOpens[key]) {
+        _trueOpens[key] = price;
+      }
+    }
+    // Alert if true open level swept
+    const TO_LABELS = { tao: 'TAO (Asia Q2 Open)', tlo: 'TLO (London Q2 Open)', tny: 'TNY (NY AM Q2 Open)', tpm: 'TPM (NY PM Q2 Open)' };
+    for (const [key, lvl] of Object.entries(_trueOpens)) {
+      if (!lvl) continue;
+      if (high > lvl) await fireAlert(`to_${key}_h`, `${TO_LABELS[key]} swept above`, 'above', lvl, 'qt');
+      if (low  < lvl) await fireAlert(`to_${key}_l`, `${TO_LABELS[key]} swept below`, 'below', lvl, 'qt');
+    }
+
+  } catch (e) { console.warn('NQ sweep poll error:', e.message); }
+}
 
 // ── Macro News Feed ──
 const MACRO_NEWS_CH_ID = '1487871136875286538';
@@ -1850,16 +2172,18 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        // Create Sweep Alerts role if not exists
-        let sweepRole = guild.roles.cache.find(r => r.name === '🔔 Sweep Alerts');
-        if (!sweepRole) {
-          sweepRole = await guild.roles.create({ name: '🔔 Sweep Alerts', color: 0x22d3ee, mentionable: true, reason: 'Sweep Alerts system' });
-        }
-        SWEEP_ROLE_ID = sweepRole.id;
-
         const everyoneRole = guild.roles.everyone;
 
-        // Create ALERTS category if not exists
+        // Create two alert roles
+        let tcRole = guild.roles.cache.find(r => r.name === '📈 Time Cycle Alerts');
+        if (!tcRole) tcRole = await guild.roles.create({ name: '📈 Time Cycle Alerts', color: 0x22d3ee, mentionable: true, reason: 'Sweep Alerts system' });
+        SWEEP_TC_ROLE_ID = tcRole.id;
+
+        let qtRole = guild.roles.cache.find(r => r.name === '📐 QT Theory Alerts');
+        if (!qtRole) qtRole = await guild.roles.create({ name: '📐 QT Theory Alerts', color: 0xa78bfa, mentionable: true, reason: 'Sweep Alerts system' });
+        SWEEP_QT_ROLE_ID = qtRole.id;
+
+        // Create ALERTS category
         let alertCat = guild.channels.cache.find(c => c.type === 4 && c.name === '〢 ALERTS');
         if (!alertCat) {
           alertCat = await guild.channels.create({
@@ -1868,7 +2192,7 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        // Create #〢alert-roles channel (everyone can see, for self-assign button)
+        // #🔔〢alert-roles — everyone sees, for self-assign buttons
         let rolesAlertCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
         if (!rolesAlertCh) {
           rolesAlertCh = await guild.channels.create({
@@ -1882,14 +2206,15 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         SWEEP_ROLES_CH_ID = rolesAlertCh.id;
 
-        // Create #〢sweep-alerts channel (only Sweep Alerts role can see)
+        // #📡〢sweep-alerts — only TC or QT role holders can see
         let alertCh = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts');
         if (!alertCh) {
           alertCh = await guild.channels.create({
             name: '📡〢sweep-alerts', type: 0, parent: alertCat.id,
             permissionOverwrites: [
               { id: everyoneRole.id, deny: ['ViewChannel'] },
-              { id: sweepRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
+              { id: tcRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
+              { id: qtRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
               { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
               { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
             ],
@@ -1897,35 +2222,39 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         SWEEP_ALERT_CH_ID = alertCh.id;
 
-        // Post self-assign button in #〢alert-roles
+        // Self-assign embed with two buttons
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('sweep_role_toggle').setLabel('🔔  Get Sweep Alerts').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('sweep_tc_toggle').setLabel('📈  Time Cycle Alerts').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('sweep_qt_toggle').setLabel('📐  QT Theory Alerts').setStyle(ButtonStyle.Secondary),
         );
         const embed = new EmbedBuilder()
           .setColor(0x22d3ee)
-          .setTitle('🔔  NQ Sweep Alerts')
+          .setTitle('📡  NQ Sweep Alerts — Choose Your Theory')
           .setDescription(
-            `**Get notified when key NQ levels are swept.**\n\n` +
-            `Tracked levels:\n` +
-            `› PDH / PDL — Previous Day High & Low\n` +
-            `› PWH / PWL — Previous Week High & Low\n` +
-            `› Pre-Market High & Low (07:00–09:30 ET)\n` +
-            `› London High & Low (02:00–05:00 ET)\n` +
-            `› NY AM High & Low (09:30–11:00 ET)\n` +
-            `› Lunch High & Low (11:30–13:30 ET)\n` +
-            `› NY PM High & Low (13:30–16:00 ET)\n` +
-            `› Asia High & Low (20:00–00:00 ET)\n` +
-            `› Weekly Open · Midnight Open\n` +
-            `› Equal Highs / Equal Lows · Initial Balance H/L\n\n` +
-            `Click below to toggle the role on/off.`
+            `Get pinged when key NQ levels are swept. Pick one or both based on the framework you trade.\n\n` +
+            `**📈 Time Cycle Alerts**\n` +
+            `› PDH / PDL — Previous Day H/L\n` +
+            `› PWH / PWL — Previous Week H/L\n` +
+            `› PMH / PML — Previous Month H/L\n` +
+            `› PreMH / PreML — Pre-Market H/L (07:00–09:30 ET)\n` +
+            `› Asia H/L swept during London (02:30–07:00 ET)\n` +
+            `› London H/L swept during NY Morning (07:00–11:30 ET)\n` +
+            `› NY Morning H/L swept during NY PM (11:30–16:00 ET)\n\n` +
+            `**📐 QT Theory Alerts**\n` +
+            `› PDH / PDL · PWH / PWL · PMH / PML · PreMH / PreML (universal)\n` +
+            `› TAO (19:30 ET) · TLO (01:30 ET) · TNY (07:30 ET) · TPM (13:30 ET) swept\n` +
+            `› Asia Q1→Q2→Q3 block H/L sweeps\n` +
+            `› London Q1→Q2→Q3 block H/L sweeps\n` +
+            `› NY AM Q1→Q2→Q3 block H/L sweeps\n` +
+            `› NY PM Q1→Q2→Q3 block H/L sweeps\n\n` +
+            `Click a button to **toggle the role on/off**. You can hold both.`
           )
-          .setFooter({ text: 'The Smart Money Paradigm  ·  Alerts powered by TradingView' });
+          .setFooter({ text: 'The Smart Money Paradigm  ·  ~10–30s data delay during market hours' });
 
         await rolesAlertCh.send({ embeds: [embed], components: [row] });
 
-        const webhookUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'your-railway-url.up.railway.app'}/sweep`;
         return interaction.editReply({
-          content: `Done!\n\n**Role:** <@&${sweepRole.id}>\n**Alert channel:** <#${alertCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>\n\n**TradingView webhook URL:**\n\`${webhookUrl}\`\n\n**Webhook secret** (set in Railway Variables as \`SWEEP_SECRET\`):\n\`${SWEEP_WEBHOOK_SECRET}\``,
+          content: `✅ Done!\n\n**Roles:** <@&${tcRole.id}> · <@&${qtRole.id}>\n**Alert channel:** <#${alertCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>`,
         });
       }
 
@@ -2130,22 +2459,24 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
       const { guild, member, customId } = interaction;
 
-      // ── Sweep role toggle ──
-      if (customId === 'sweep_role_toggle') {
+      // ── Sweep role toggles ──
+      if (customId === 'sweep_tc_toggle' || customId === 'sweep_qt_toggle') {
         await interaction.deferReply({ ephemeral: true });
-        if (!SWEEP_ROLE_ID) {
-          const r = interaction.guild.roles.cache.find(r => r.name === '🔔 Sweep Alerts');
-          if (r) SWEEP_ROLE_ID = r.id;
-        }
-        if (!SWEEP_ROLE_ID) return interaction.editReply({ content: 'Sweep Alerts role not found. Ask staff to run `/setup-sweep-alerts`.' });
-        const member = interaction.member;
-        const has = member.roles.cache.has(SWEEP_ROLE_ID);
+        const isTC = customId === 'sweep_tc_toggle';
+        // Lazy-load role IDs if missing
+        if (!SWEEP_TC_ROLE_ID) { const r = interaction.guild.roles.cache.find(r => r.name === '📈 Time Cycle Alerts'); if (r) SWEEP_TC_ROLE_ID = r.id; }
+        if (!SWEEP_QT_ROLE_ID) { const r = interaction.guild.roles.cache.find(r => r.name === '📐 QT Theory Alerts');  if (r) SWEEP_QT_ROLE_ID = r.id; }
+        const roleId = isTC ? SWEEP_TC_ROLE_ID : SWEEP_QT_ROLE_ID;
+        const roleName = isTC ? '📈 Time Cycle Alerts' : '📐 QT Theory Alerts';
+        if (!roleId) return interaction.editReply({ content: 'Role not found. Ask staff to run `/setup-sweep-alerts`.' });
+        const m = interaction.member;
+        const has = m.roles.cache.has(roleId);
         if (has) {
-          await member.roles.remove(SWEEP_ROLE_ID);
-          return interaction.editReply({ content: '🔕 Removed — you will no longer receive sweep alerts.' });
+          await m.roles.remove(roleId);
+          return interaction.editReply({ content: `🔕 Removed **${roleName}** — you will no longer receive these alerts.` });
         } else {
-          await member.roles.add(SWEEP_ROLE_ID);
-          return interaction.editReply({ content: '🔔 Added — you will now be pinged when key NQ levels are swept.' });
+          await m.roles.add(roleId);
+          return interaction.editReply({ content: `🔔 Added **${roleName}** — you will now be pinged for these NQ sweeps.` });
         }
       }
 
@@ -2404,8 +2735,10 @@ client.once(Events.ClientReady, () => {
     if (cal) { ENV_CH_ID = cal.id; console.log('economic-calendar channel found:', ENV_CH_ID); }
     const eng = guild.channels.cache.find(c => c.name === '🧠〢environment-selection' && c.parentId === ENV_CATEGORY_ID);
     if (eng) { ENV_ENGINE_CH_ID = eng.id; console.log('environment-selection channel found:', ENV_ENGINE_CH_ID); }
-    const sweepRole = guild.roles.cache.find(r => r.name === '🔔 Sweep Alerts');
-    if (sweepRole) { SWEEP_ROLE_ID = sweepRole.id; console.log('Sweep Alerts role found:', SWEEP_ROLE_ID); }
+    const tcRole = guild.roles.cache.find(r => r.name === '📈 Time Cycle Alerts');
+    if (tcRole) { SWEEP_TC_ROLE_ID = tcRole.id; console.log('TC Alerts role found:', SWEEP_TC_ROLE_ID); }
+    const qtRole = guild.roles.cache.find(r => r.name === '📐 QT Theory Alerts');
+    if (qtRole) { SWEEP_QT_ROLE_ID = qtRole.id; console.log('QT Alerts role found:', SWEEP_QT_ROLE_ID); }
     const sweepCh = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts');
     if (sweepCh) { SWEEP_ALERT_CH_ID = sweepCh.id; console.log('sweep-alerts channel found:', SWEEP_ALERT_CH_ID); }
     const sweepRolesCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
@@ -2424,6 +2757,14 @@ client.once(Events.ClientReady, () => {
       } catch (e) { console.warn(`Startup cache refresh failed (${week}): ${e.message}`); }
     }
   })();
+
+  // Start NQ sweep monitor — refresh levels then poll every 30s
+  _refreshNQLevels().then(() => {
+    setInterval(() => {
+      _pollNQSweeps().catch(e => console.warn('sweep poll err:', e.message));
+    }, SWEEP_POLL_MS);
+    console.log('NQ sweep monitor started (every 30s, ~10min data delay)');
+  }).catch(e => console.warn('NQ level init failed:', e.message));
 
   // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
   setTimeout(() => {
