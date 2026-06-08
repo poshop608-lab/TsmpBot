@@ -1498,7 +1498,7 @@ async function _pollNQSweeps() {
           { name: 'Theory', value: roleTag, inline: true }
         )
         .setTimestamp()
-        .setFooter({ text: '~10–30s delay during market hours · TSMP Sweep Monitor' });
+        .setFooter({ text: '⚠️ ~10 min delay outside market hours · TSMP Sweep Monitor · The Smart Money Paradigm' });
       await ch.send({ content: rolePings.join(' '), embeds: [embed] });
       console.log(`Sweep: ${key} ${dirText} @ ${lvlPrice}`);
     }
@@ -2229,27 +2229,44 @@ client.on(Events.InteractionCreate, async interaction => {
         );
         const embed = new EmbedBuilder()
           .setColor(0x22d3ee)
-          .setTitle('📡  NQ Sweep Alerts — Choose Your Theory')
-          .setDescription(
-            `Get pinged when key NQ levels are swept. Pick one or both based on the framework you trade.\n\n` +
-            `**📈 Time Cycle Alerts**\n` +
-            `› PDH / PDL — Previous Day H/L\n` +
-            `› PWH / PWL — Previous Week H/L\n` +
-            `› PMH / PML — Previous Month H/L\n` +
-            `› PreMH / PreML — Pre-Market H/L (07:00–09:30 ET)\n` +
-            `› Asia H/L swept during London (02:30–07:00 ET)\n` +
-            `› London H/L swept during NY Morning (07:00–11:30 ET)\n` +
-            `› NY Morning H/L swept during NY PM (11:30–16:00 ET)\n\n` +
-            `**📐 QT Theory Alerts**\n` +
-            `› PDH / PDL · PWH / PWL · PMH / PML · PreMH / PreML (universal)\n` +
-            `› TAO (19:30 ET) · TLO (01:30 ET) · TNY (07:30 ET) · TPM (13:30 ET) swept\n` +
-            `› Asia Q1→Q2→Q3 block H/L sweeps\n` +
-            `› London Q1→Q2→Q3 block H/L sweeps\n` +
-            `› NY AM Q1→Q2→Q3 block H/L sweeps\n` +
-            `› NY PM Q1→Q2→Q3 block H/L sweeps\n\n` +
-            `Click a button to **toggle the role on/off**. You can hold both.`
+          .setTitle('📡  NQ Sweep Alerts')
+          .setDescription(`Select the framework you trade. You can hold **both roles** — alerts fire in <#${alertCh.id}>.\n\n⚠️ **Note: ~10 minute data delay.** Alerts are informational, not real-time execution signals.`)
+          .addFields(
+            {
+              name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈  TIME CYCLE ALERTS',
+              value:
+                '**Universal Levels** *(always active)*\n' +
+                '`PDH / PDL` — Previous Day High & Low\n' +
+                '`PWH / PWL` — Previous Week High & Low\n' +
+                '`PMH / PML` — Previous Month High & Low\n' +
+                '`PreMH / PreML` — Pre-Market High & Low\n\n' +
+                '**Cross-Session PXH / PXL**\n' +
+                '`Asia H/L` built `18:00–02:30 ET` → alerted during **London**\n' +
+                '`London H/L` built `02:30–07:00 ET` → alerted during **NY Morning**\n' +
+                '`NY Morning H/L` built `07:00–11:30 ET` → alerted during **NY PM**',
+              inline: false,
+            },
+            {
+              name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📐  QT THEORY ALERTS',
+              value:
+                '**Universal Levels** *(same as above)*\n' +
+                '`PDH / PDL` · `PWH / PWL` · `PMH / PML` · `PreMH / PreML`\n\n' +
+                '**True Opens** *(Q2 open of each session)*\n' +
+                '`TAO` 19:30 ET · `TLO` 01:30 ET · `TNY` 07:30 ET · `TPM` 13:30 ET\n\n' +
+                '**90-Min Q Block Sweeps** *(previous Q H/L swept in current Q)*\n' +
+                '`Asia Q1` 18:00–19:30 → `Q2` 19:30–21:00 → `Q3` 21:00–22:30\n' +
+                '`London Q1` 00:00–01:30 → `Q2` 01:30–03:00 → `Q3` 03:00–04:30\n' +
+                '`NY AM Q1` 06:00–07:30 → `Q2` 07:30–09:00 → `Q3` 09:00–10:30\n' +
+                '`NY PM Q1` 12:00–13:30 → `Q2` 13:30–15:00 → `Q3` 15:00–16:30',
+              inline: false,
+            },
+            {
+              name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+              value: 'Click a button below to **toggle your role on or off**.',
+              inline: false,
+            }
           )
-          .setFooter({ text: 'The Smart Money Paradigm  ·  ~10–30s data delay during market hours' });
+          .setFooter({ text: 'The Smart Money Paradigm  ·  Data via Yahoo Finance  ·  ~10 min delay outside market hours' });
 
         await rolesAlertCh.send({ embeds: [embed], components: [row] });
 
