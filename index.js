@@ -1472,19 +1472,77 @@ const QT_TRUE_OPENS = {
 let _trueOpens = { tao: null, tlo: null, tny: null, tpm: null };
 let _trueOpenFired = {};
 
-async function _fetchNQCandles(range, interval) {
+// ── Yahoo Finance cookie+crumb auth ──
+let _yfCookie = null;
+let _yfCrumb  = null;
+
+async function _yfRefreshAuth() {
   const https = require('https');
-  return new Promise((resolve, reject) => {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${NQ_SYMBOL}?interval=${interval}&range=${range}`;
-    https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  const cookie = await new Promise((resolve, reject) => {
+    const req = https.get('https://finance.yahoo.com/quote/NQ%3DF/', { headers: { 'User-Agent': UA } }, (res) => {
+      const setCookie = res.headers['set-cookie'] || [];
+      const a1 = setCookie.find(c => c.startsWith('A1='));
+      res.resume();
+      if (a1) resolve(a1.split(';')[0]);
+      else reject(new Error('No A1 cookie'));
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('cookie timeout')); });
+  });
+
+  const crumb = await new Promise((resolve, reject) => {
+    const req = https.get('https://query2.finance.yahoo.com/v1/test/getcrumb', {
+      headers: { 'User-Agent': UA, 'Cookie': cookie }
+    }, (res) => {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
-        try { resolve(JSON.parse(d).chart.result[0]); }
-        catch (e) { reject(e); }
+        if (d && !d.includes('{')) resolve(d.trim());
+        else reject(new Error('bad crumb: ' + d));
       });
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('crumb timeout')); });
   });
+
+  _yfCookie = cookie;
+  _yfCrumb  = crumb;
+  console.log('YF auth refreshed, crumb:', crumb.slice(0, 4) + '***');
+}
+
+async function _fetchNQCandles(range, interval) {
+  const https = require('https');
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  if (!_yfCookie || !_yfCrumb) await _yfRefreshAuth();
+
+  const fetchOnce = (cookie, crumb) => new Promise((resolve, reject) => {
+    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${NQ_SYMBOL}?interval=${interval}&range=${range}&crumb=${encodeURIComponent(crumb)}`;
+    const req = https.get(url, { headers: { 'User-Agent': UA, 'Cookie': cookie } }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(d);
+          const result = json?.chart?.result?.[0];
+          if (!result) reject(new Error('no result: ' + d.slice(0, 120)));
+          else resolve(result);
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('fetch timeout')); });
+  });
+
+  try {
+    return await fetchOnce(_yfCookie, _yfCrumb);
+  } catch (e) {
+    console.warn('YF fetch failed, refreshing auth:', e.message);
+    await _yfRefreshAuth();
+    return await fetchOnce(_yfCookie, _yfCrumb);
+  }
 }
 
 async function _refreshNQLevels() {
@@ -1950,11 +2008,8 @@ client.on(Events.InteractionCreate, async interaction => {
       if (commandName === 'nq') {
         await interaction.deferReply({ ephemeral: false });
         try {
-          const res = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/NQ=F?interval=1m&range=1d', {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-          });
-          const json = await res.json();
-          const meta = json?.chart?.result?.[0]?.meta;
+          const result = await _fetchNQCandles('1d', '1m');
+          const meta = result?.meta;
           if (!meta) return interaction.editReply({ content: 'Failed to fetch NQ price.' });
           const price     = meta.regularMarketPrice ?? meta.previousClose;
           const prevClose = meta.previousClose;
@@ -3130,13 +3185,19 @@ client.once(Events.ClientReady, () => {
     }
   })();
 
-  // Start NQ sweep monitor — refresh levels then poll every 30s
-  _refreshNQLevels().then(() => {
+  // Start NQ sweep monitor — auth first, then levels, then poll every 30s
+  _yfRefreshAuth().then(() => {
+    // Refresh cookie+crumb every 6 hours
+    setInterval(() => {
+      _yfRefreshAuth().catch(e => console.warn('YF auth refresh failed:', e.message));
+    }, 6 * 60 * 60 * 1000);
+    return _refreshNQLevels();
+  }).then(() => {
     setInterval(() => {
       _pollNQSweeps().catch(e => console.warn('sweep poll err:', e.message));
     }, SWEEP_POLL_MS);
     console.log('NQ sweep monitor started (every 30s, ~10min data delay)');
-  }).catch(e => console.warn('NQ level init failed:', e.message));
+  }).catch(e => console.warn('NQ monitor init failed:', e.message));
 
   // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
   setTimeout(() => {
