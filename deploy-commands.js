@@ -198,28 +198,28 @@ const commands = [
         .setRequired(true)
     )
     .addStringOption(opt =>
+      opt.setName('note')
+        .setDescription('Session topic or note (e.g. "NQ trade review")')
+        .setRequired(true)
+    )
+    .addStringOption(opt =>
       opt.setName('time')
         .setDescription('Preset start time (ET)')
-        .setRequired(false)
+        .setRequired(true)
         .addChoices(
-          { name: '8:40 AM ET',         value: '08:40' },
-          { name: '9:00 AM ET',         value: '09:00' },
-          { name: '9:30 AM ET',         value: '09:30' },
-          { name: '10:00 AM ET',        value: '10:00' },
-          { name: '11:00 AM ET',        value: '11:00' },
-          { name: '2:00 PM ET',         value: '14:00' },
-          { name: '3:00 PM ET',         value: '15:00' },
+          { name: '8:40 AM ET',          value: '08:40' },
+          { name: '9:00 AM ET',          value: '09:00' },
+          { name: '9:30 AM ET',          value: '09:30' },
+          { name: '10:00 AM ET',         value: '10:00' },
+          { name: '11:00 AM ET',         value: '11:00' },
+          { name: '2:00 PM ET',          value: '14:00' },
+          { name: '3:00 PM ET',          value: '15:00' },
           { name: '3:30 AM ET (London)', value: '03:30' },
         )
     )
     .addStringOption(opt =>
       opt.setName('custom_time')
-        .setDescription('Custom time in HH:MM 24h ET format (e.g. 13:45) — overrides preset')
-        .setRequired(false)
-    )
-    .addStringOption(opt =>
-      opt.setName('note')
-        .setDescription('Optional note shown in the countdown (e.g. "NQ trade review")')
+        .setDescription('Override with custom HH:MM 24h ET (e.g. 13:45) — overrides preset time')
         .setRequired(false)
     ),
 

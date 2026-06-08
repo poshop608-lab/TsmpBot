@@ -1338,9 +1338,10 @@ function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live, host) {
     const totalMin = Math.max(0, Math.ceil(secsLeft / 60));
     const hrs  = Math.floor(totalMin / 60);
     const mins = totalMin % 60;
-    countdownStr = hrs > 0
-      ? `**${hrs}h ${mins}m** · <t:${startEpoch}:R>`
-      : `**${mins} min** · <t:${startEpoch}:R>`;
+    const parts = [];
+    if (hrs > 0)  parts.push(`**${hrs}h**`);
+    parts.push(`**${mins}m**`);
+    countdownStr = `${parts.join(' ')} · <t:${startEpoch}:R>`;
   }
   const embed = new EmbedBuilder()
     .setColor(color)
@@ -1351,7 +1352,7 @@ function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live, host) {
       { name: 'In Your Timezone', value: `<t:${startEpoch}:t> on <t:${startEpoch}:D>`, inline: true },
       { name: live ? 'Status' : 'Starting In', value: countdownStr, inline: false },
     );
-  if (host) embed.addFields({ name: 'Hosted By', value: `👤 ${host}`, inline: true });
+  if (host) embed.addFields({ name: 'Hosted By', value: `👤 @${host}`, inline: true });
   if (sessionNote) embed.addFields({ name: 'Note', value: sessionNote, inline: false });
   embed.setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule  ·  ET = UTC−4' }).setTimestamp();
   return embed;
