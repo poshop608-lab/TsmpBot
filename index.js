@@ -696,9 +696,11 @@ function _weekDateRange(week) {
   const dow = nyNow.getDay();
   let monday = new Date(nyNow);
   if (week === 'nextweek') {
-    const d = (8 - dow) % 7 || 7;
+    // Days until next Monday: Sun=8, Mon=7, Tue=6... Sat=2
+    const d = dow === 0 ? 8 : (8 - dow);
     monday.setDate(nyNow.getDate() + d);
   } else {
+    // Days back to this Monday: Sun→+1 (next day), Mon→0, Tue→-1...
     const d = dow === 0 ? 1 : -(dow - 1);
     monday.setDate(nyNow.getDate() + d);
   }
