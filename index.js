@@ -1448,6 +1448,44 @@ let _lastSweepDay  = null;
 let _lastSweepWeek = null;
 let _lastSweepMonth = null;
 
+// ── Sweep state persistence ──
+const SWEEP_STATE_FILE = path.join(__dirname, 'data', 'sweep_state.json');
+
+function _sweepStateSave() {
+  try {
+    fs.writeFileSync(SWEEP_STATE_FILE, JSON.stringify({
+      _qtBlocks,
+      _tcSessions,
+      _swept,
+      _lastSweepDay,
+      _lastSweepWeek,
+      _lastSweepMonth,
+      _trueOpens: typeof _trueOpens !== 'undefined' ? _trueOpens : null,
+      _trueOpenFired: typeof _trueOpenFired !== 'undefined' ? _trueOpenFired : {},
+    }));
+  } catch (e) { console.warn('sweep state save failed:', e.message); }
+}
+
+function _sweepStateLoad() {
+  try {
+    const raw = fs.readFileSync(SWEEP_STATE_FILE, 'utf8');
+    const s = JSON.parse(raw);
+    // Only restore if saved for today — stale data from yesterday is useless
+    const nyToday = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toDateString();
+    if (s._lastSweepDay !== nyToday) {
+      console.log('Sweep state stale (different day) — starting fresh');
+      return;
+    }
+    if (s._qtBlocks)       _qtBlocks       = s._qtBlocks;
+    if (s._tcSessions)     _tcSessions     = s._tcSessions;
+    if (s._swept)          _swept          = s._swept;
+    if (s._lastSweepDay)   _lastSweepDay   = s._lastSweepDay;
+    if (s._lastSweepWeek)  _lastSweepWeek  = s._lastSweepWeek;
+    if (s._lastSweepMonth) _lastSweepMonth = s._lastSweepMonth;
+    console.log('Sweep state restored for', nyToday);
+  } catch (_) { /* no file yet, fine */ }
+}
+
 function _nyTime() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 }
@@ -1503,6 +1541,19 @@ const QT_TRUE_OPENS = {
 };
 let _trueOpens = { tao: null, tlo: null, tny: null, tpm: null };
 let _trueOpenFired = {};
+
+// Restore sweep state from file on startup
+_sweepStateLoad();
+// After restore, patch _trueOpens from saved state if available
+try {
+  const raw = fs.readFileSync(SWEEP_STATE_FILE, 'utf8');
+  const s = JSON.parse(raw);
+  const nyToday = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toDateString();
+  if (s._lastSweepDay === nyToday) {
+    if (s._trueOpens)     _trueOpens     = s._trueOpens;
+    if (s._trueOpenFired) _trueOpenFired = s._trueOpenFired;
+  }
+} catch (_) {}
 
 // ── Yahoo Finance cookie+crumb auth ──
 let _yfCookie = null;
@@ -1654,6 +1705,7 @@ async function _pollNQSweeps() {
       _nqLevels.premh = null;
       _nqLevels.preml = null;
       await _refreshNQLevels();
+      _sweepStateSave();
     }
 
     // ── Weekly reset ──
@@ -1804,6 +1856,9 @@ async function _pollNQSweeps() {
       if (high > lvl) await fireAlert(`to_${key}_h`, `${TO_LABELS[key]} swept above`, 'above', lvl, 'qt');
       if (low  < lvl) await fireAlert(`to_${key}_l`, `${TO_LABELS[key]} swept below`, 'below', lvl, 'qt');
     }
+
+    // Persist state so Railway restarts don't lose session/block data
+    _sweepStateSave();
 
   } catch (e) { console.warn('NQ sweep poll error:', e.message); }
 }
