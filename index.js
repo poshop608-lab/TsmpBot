@@ -1304,8 +1304,8 @@ function _vcSave() {
     try { fs.unlinkSync(VC_STATE_FILE); } catch (_) {}
     return;
   }
-  const { messageId, vcChannelName, sessionNote, host, startEpoch, warned15 } = _vcCountdown;
-  fs.writeFileSync(VC_STATE_FILE, JSON.stringify({ messageId, vcChannelName, sessionNote, host, startEpoch, warned15 }));
+  const { messageId, vcChannelName, sessionNote, host, startEpoch, warned4h, warned1h, warned15 } = _vcCountdown;
+  fs.writeFileSync(VC_STATE_FILE, JSON.stringify({ messageId, vcChannelName, sessionNote, host, startEpoch, warned4h, warned1h, warned15 }));
 }
 
 function _vcLoad() {
@@ -1387,8 +1387,20 @@ async function _tickVcCountdown() {
   const secsLeft = startEpoch - now;
   const live = secsLeft <= 0;
 
-  // 15-min warning ping
-  if (!warned15 && secsLeft > 0 && secsLeft <= 900 && VC_ALERT_ROLE_ID) {
+  // 4-hour warning
+  if (!_vcCountdown.warned4h && secsLeft > 0 && secsLeft <= 4 * 3600 && VC_ALERT_ROLE_ID) {
+    _vcCountdown.warned4h = true;
+    _vcSave();
+    await ch.send({ content: `<@&${VC_ALERT_ROLE_ID}> 📅 **${vcChannelName}** session in ~4 hours. <t:${startEpoch}:R>` });
+  }
+  // 1-hour warning
+  if (!_vcCountdown.warned1h && secsLeft > 0 && secsLeft <= 3600 && VC_ALERT_ROLE_ID) {
+    _vcCountdown.warned1h = true;
+    _vcSave();
+    await ch.send({ content: `<@&${VC_ALERT_ROLE_ID}> ⏰ **${vcChannelName}** starts in ~1 hour. <t:${startEpoch}:R>` });
+  }
+  // 15-min warning
+  if (!_vcCountdown.warned15 && secsLeft > 0 && secsLeft <= 900 && VC_ALERT_ROLE_ID) {
     _vcCountdown.warned15 = true;
     _vcSave();
     await ch.send({ content: `<@&${VC_ALERT_ROLE_ID}> 🔔 **${vcChannelName}** starts in ~15 minutes! <t:${startEpoch}:R>` });
@@ -2682,7 +2694,7 @@ client.on(Events.InteractionCreate, async interaction => {
         });
 
         const intervalId = setInterval(() => _tickVcCountdown().catch(() => {}), 60 * 1000);
-        _vcCountdown = { messageId: sentMsg.id, vcChannelName: vcChName, sessionNote: note, host, startEpoch, intervalId, warned15: false };
+        _vcCountdown = { messageId: sentMsg.id, vcChannelName: vcChName, sessionNote: note, host, startEpoch, intervalId, warned4h: false, warned1h: false, warned15: false };
         _vcSave();
 
         return interaction.editReply({ content: `✅ Countdown posted in <#${VC_SCHED_CH_ID}>. Starts <t:${startEpoch}:R>.` });
