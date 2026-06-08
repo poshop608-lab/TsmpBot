@@ -1290,6 +1290,92 @@ let SWEEP_QT_ROLE_ID   = null;  // 📐 QT Theory Alerts role
 let SWEEP_ALERT_CH_ID  = null;  // #📡〢sweep-alerts channel
 let SWEEP_ROLES_CH_ID  = null;  // #🔔〢alert-roles channel
 
+// ── VC Countdown ──
+let VC_ALERT_ROLE_ID   = null;  // 📅 VC Alerts role
+let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
+
+// active countdown: { messageId, vcChannelId, vcChannelName, sessionNote, startEpoch, intervalId, warned15 }
+let _vcCountdown = null;
+
+const VC_CHANNELS = [
+  { label: '🔊  Live Trading',   name: 'Live Trading'   },
+  { label: '🔊  Market Review',  name: 'Market Review'  },
+  { label: '🔊  Study Session',  name: 'Study Session'  },
+  { label: '🔊  Beginner Only',  name: 'Beginner Only'  },
+  { label: '🔊  1-on-1',         name: '1-on-1'         },
+];
+
+const VC_PRESET_TIMES = [
+  { label: '8:40 AM ET',  value: '08:40' },
+  { label: '9:00 AM ET',  value: '09:00' },
+  { label: '9:30 AM ET',  value: '09:30' },
+  { label: '10:00 AM ET', value: '10:00' },
+  { label: '11:00 AM ET', value: '11:00' },
+  { label: '2:00 PM ET',  value: '14:00' },
+  { label: '3:00 PM ET',  value: '15:00' },
+  { label: '3:30 AM ET (London)', value: '03:30' },
+];
+
+function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live) {
+  const now = Math.floor(Date.now() / 1000);
+  const secsLeft = startEpoch - now;
+  const color = live ? 0x22c55e : secsLeft <= 900 ? 0xfbbf24 : 0x22d3ee;
+  const title = live ? '🟢  Session Is Live' : '⏳  Upcoming VC Session';
+  let countdownStr;
+  if (live) {
+    countdownStr = '**NOW LIVE** — jump in!';
+  } else {
+    const totalMin = Math.max(0, Math.ceil(secsLeft / 60));
+    const hrs  = Math.floor(totalMin / 60);
+    const mins = totalMin % 60;
+    countdownStr = hrs > 0
+      ? `**${hrs}h ${mins}m** · <t:${startEpoch}:R>`
+      : `**${mins} min** · <t:${startEpoch}:R>`;
+  }
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .addFields(
+      { name: 'Channel',    value: `🔊 ${vcChannelName}`, inline: true },
+      { name: 'Start Time', value: `<t:${startEpoch}:t> ET · <t:${startEpoch}:D>`, inline: true },
+      { name: '​',     value: '​', inline: true },
+      { name: live ? 'Status' : 'Starting In', value: countdownStr, inline: false },
+    );
+  if (sessionNote) embed.addFields({ name: 'Note', value: sessionNote, inline: false });
+  embed.setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule' }).setTimestamp();
+  return embed;
+}
+
+async function _tickVcCountdown() {
+  if (!_vcCountdown) return;
+  const { messageId, vcChannelName, sessionNote, startEpoch, warned15 } = _vcCountdown;
+  const guild = client.guilds.cache.first();
+  if (!guild || !VC_SCHED_CH_ID) return;
+  const ch = guild.channels.cache.get(VC_SCHED_CH_ID);
+  if (!ch) return;
+  const now = Math.floor(Date.now() / 1000);
+  const secsLeft = startEpoch - now;
+  const live = secsLeft <= 0;
+
+  // 15-min warning ping
+  if (!warned15 && secsLeft > 0 && secsLeft <= 900 && VC_ALERT_ROLE_ID) {
+    _vcCountdown.warned15 = true;
+    await ch.send({ content: `<@&${VC_ALERT_ROLE_ID}> 🔔 **${vcChannelName}** starts in ~15 minutes! <t:${startEpoch}:R>` });
+  }
+
+  // update embed
+  try {
+    const msg = await ch.messages.fetch(messageId);
+    await msg.edit({ embeds: [_buildVcEmbed(startEpoch, vcChannelName, sessionNote, live)] });
+  } catch (_) {}
+
+  // stop after live + 30 min
+  if (secsLeft < -(30 * 60)) {
+    clearInterval(_vcCountdown.intervalId);
+    _vcCountdown = null;
+  }
+}
+
 // ── NQ Price Monitor ──
 // Yahoo Finance: ~30s lag during market hours, ~10min outside
 const SWEEP_POLL_MS = 30 * 1000;
@@ -2362,6 +2448,152 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
+      // ── /setup-vc-alerts ──
+      if (commandName === 'setup-vc-alerts') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        const everyoneRole = guild.roles.everyone;
+
+        let vcRole = guild.roles.cache.find(r => r.name === '📅 VC Alerts');
+        if (!vcRole) vcRole = await guild.roles.create({ name: '📅 VC Alerts', color: 0xfbbf24, mentionable: true, reason: 'VC Alerts system' });
+        VC_ALERT_ROLE_ID = vcRole.id;
+
+        let alertCat = guild.channels.cache.find(c => c.type === 4 && c.name === '〢 ALERTS');
+        if (!alertCat) {
+          alertCat = await guild.channels.create({
+            name: '〢 ALERTS', type: 4,
+            permissionOverwrites: [{ id: everyoneRole.id, deny: ['ViewChannel'] }],
+          });
+        }
+
+        // #🔔〢alert-roles — add VC button if channel exists
+        let rolesAlertCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
+        if (!rolesAlertCh) {
+          rolesAlertCh = await guild.channels.create({
+            name: '🔔〢alert-roles', type: 0, parent: alertCat.id,
+            permissionOverwrites: [
+              { id: everyoneRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
+              { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+              { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+            ],
+          });
+        }
+        if (!SWEEP_ROLES_CH_ID) SWEEP_ROLES_CH_ID = rolesAlertCh.id;
+
+        // #📅〢vc-schedule — everyone can see, nobody can type
+        let vcSchedCh = guild.channels.cache.find(c => c.name === '📅〢vc-schedule');
+        if (!vcSchedCh) {
+          vcSchedCh = await guild.channels.create({
+            name: '📅〢vc-schedule', type: 0, parent: alertCat.id,
+            permissionOverwrites: [
+              { id: everyoneRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
+              { id: vcRole.id, allow: ['ViewChannel', 'ReadMessageHistory'] },
+              { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+              { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+            ],
+          });
+        }
+        VC_SCHED_CH_ID = vcSchedCh.id;
+
+        // VC self-assign button in alert-roles
+        const vcRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('vc_alert_toggle').setLabel('📅  VC Session Alerts').setStyle(ButtonStyle.Success),
+        );
+        const vcEmbed = new EmbedBuilder()
+          .setColor(0xfbbf24)
+          .setTitle('📅  VC Session Alerts')
+          .setDescription(`Get pinged when a VC session is scheduled.\n\nCountdown updates live in <#${vcSchedCh.id}> with a **15-min warning** before it starts.\n\nClick below to toggle your role.`)
+          .setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule' });
+        await rolesAlertCh.send({ embeds: [vcEmbed], components: [vcRow] });
+
+        return interaction.editReply({ content: `✅ Done!\n**Role:** <@&${vcRole.id}>\n**Schedule channel:** <#${vcSchedCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>` });
+      }
+
+      // ── /vc-schedule ──
+      if (commandName === 'vc-schedule') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+
+        if (!VC_SCHED_CH_ID) return interaction.editReply({ content: 'Run `/setup-vc-alerts` first.' });
+
+        const timeVal    = interaction.options.getString('time');
+        const vcChName   = interaction.options.getString('channel');
+        const customTime = interaction.options.getString('custom_time');
+        const note       = interaction.options.getString('note') ?? null;
+
+        // Parse time → next occurrence in ET
+        const chosenTime = customTime ?? timeVal;
+        const [hStr, mStr] = chosenTime.split(':');
+        const hh = parseInt(hStr, 10);
+        const mm = parseInt(mStr, 10);
+        if (isNaN(hh) || isNaN(mm)) return interaction.editReply({ content: 'Invalid time format. Use HH:MM (24h ET).' });
+
+        // Build target epoch (ET = UTC-4 in summer, UTC-5 winter — use Intl to determine)
+        const nowNY = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const target = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        target.setHours(hh, mm, 0, 0);
+        // If time already passed today, schedule for tomorrow
+        if (target <= nowNY) target.setDate(target.getDate() + 1);
+        // Convert target NY time → UTC epoch
+        const targetUTC = new Date(target.toLocaleString('en-US', { timeZone: 'UTC' }));
+        // Use offset approach: get UTC equivalent
+        const nyOffsetMs = nowNY.getTime() - new Date(new Date().toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+        const startEpoch = Math.floor((target.getTime() - nyOffsetMs) / 1000);
+
+        const secsUntil = startEpoch - Math.floor(Date.now() / 1000);
+        if (secsUntil > 24 * 3600) return interaction.editReply({ content: 'Cannot schedule more than 24h ahead.' });
+
+        // Cancel any existing countdown
+        if (_vcCountdown) {
+          clearInterval(_vcCountdown.intervalId);
+          _vcCountdown = null;
+        }
+
+        const ch = guild.channels.cache.get(VC_SCHED_CH_ID);
+        if (!ch) return interaction.editReply({ content: 'vc-schedule channel not found.' });
+
+        // Initial ping
+        const pingContent = VC_ALERT_ROLE_ID
+          ? `<@&${VC_ALERT_ROLE_ID}> 📅 **${vcChName}** session scheduled for <t:${startEpoch}:t> ET — <t:${startEpoch}:R>`
+          : `📅 **${vcChName}** session scheduled for <t:${startEpoch}:t> ET — <t:${startEpoch}:R>`;
+
+        const sentMsg = await ch.send({
+          content: pingContent,
+          embeds: [_buildVcEmbed(startEpoch, vcChName, note, false)],
+        });
+
+        const intervalId = setInterval(() => _tickVcCountdown().catch(() => {}), 60 * 1000);
+        _vcCountdown = { messageId: sentMsg.id, vcChannelName: vcChName, sessionNote: note, startEpoch, intervalId, warned15: false };
+
+        return interaction.editReply({ content: `✅ Countdown posted in <#${VC_SCHED_CH_ID}>. Starts <t:${startEpoch}:R>.` });
+      }
+
+      // ── /vc-cancel ──
+      if (commandName === 'vc-cancel') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        if (!_vcCountdown) return interaction.reply({ content: 'No active VC countdown.', ephemeral: true });
+        clearInterval(_vcCountdown.intervalId);
+        // Edit message to cancelled state
+        try {
+          const ch = guild.channels.cache.get(VC_SCHED_CH_ID);
+          if (ch) {
+            const msg = await ch.messages.fetch(_vcCountdown.messageId);
+            const cancelEmbed = new EmbedBuilder()
+              .setColor(0x6b7280)
+              .setTitle('❌  Session Cancelled')
+              .setDescription(`The **${_vcCountdown.vcChannelName}** session has been cancelled.`)
+              .setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule' })
+              .setTimestamp();
+            await msg.edit({ embeds: [cancelEmbed], components: [] });
+          }
+        } catch (_) {}
+        _vcCountdown = null;
+        return interaction.reply({ content: '✅ VC countdown cancelled.', ephemeral: true });
+      }
+
       if (commandName === 'clear-welcome') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -2581,6 +2813,25 @@ client.on(Events.InteractionCreate, async interaction => {
         } else {
           await m.roles.add(roleId);
           return interaction.editReply({ content: `🔔 Added **${roleName}** — you will now be pinged for these NQ sweeps.` });
+        }
+      }
+
+      // ── VC alert role toggle ──
+      if (customId === 'vc_alert_toggle') {
+        await interaction.deferReply({ ephemeral: true });
+        if (!VC_ALERT_ROLE_ID) {
+          const r = interaction.guild.roles.cache.find(r => r.name === '📅 VC Alerts');
+          if (r) VC_ALERT_ROLE_ID = r.id;
+        }
+        if (!VC_ALERT_ROLE_ID) return interaction.editReply({ content: 'Role not found. Ask staff to run `/setup-vc-alerts`.' });
+        const m = interaction.member;
+        const has = m.roles.cache.has(VC_ALERT_ROLE_ID);
+        if (has) {
+          await m.roles.remove(VC_ALERT_ROLE_ID);
+          return interaction.editReply({ content: '🔕 Removed **📅 VC Alerts** — you will no longer be pinged for sessions.' });
+        } else {
+          await m.roles.add(VC_ALERT_ROLE_ID);
+          return interaction.editReply({ content: '🔔 Added **📅 VC Alerts** — you will be pinged when sessions are scheduled.' });
         }
       }
 
@@ -2847,6 +3098,10 @@ client.once(Events.ClientReady, () => {
     if (sweepCh) { SWEEP_ALERT_CH_ID = sweepCh.id; console.log('sweep-alerts channel found:', SWEEP_ALERT_CH_ID); }
     const sweepRolesCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
     if (sweepRolesCh) { SWEEP_ROLES_CH_ID = sweepRolesCh.id; }
+    const vcRole = guild.roles.cache.find(r => r.name === '📅 VC Alerts');
+    if (vcRole) { VC_ALERT_ROLE_ID = vcRole.id; }
+    const vcSchedCh = guild.channels.cache.find(c => c.name === '📅〢vc-schedule');
+    if (vcSchedCh) { VC_SCHED_CH_ID = vcSchedCh.id; }
   }
 
   // Refresh calendar cache on startup so data is always current after each Railway deploy

@@ -173,6 +173,55 @@ const commands = [
     .setName('test-sweep')
     .setDescription('Fire test sweep alert embeds to the sweep channel (staff only)'),
 
+  new SlashCommandBuilder()
+    .setName('setup-vc-alerts')
+    .setDescription('Create VC Alerts role, vc-schedule channel, and self-assign button (staff only)'),
+
+  new SlashCommandBuilder()
+    .setName('vc-schedule')
+    .setDescription('Schedule a VC session with a live countdown (staff only)')
+    .addStringOption(opt =>
+      opt.setName('channel')
+        .setDescription('Which VC channel')
+        .setRequired(true)
+        .addChoices(
+          { name: '🔊 Live Trading',   value: 'Live Trading'   },
+          { name: '🔊 Market Review',  value: 'Market Review'  },
+          { name: '🔊 Study Session',  value: 'Study Session'  },
+          { name: '🔊 Beginner Only',  value: 'Beginner Only'  },
+          { name: '🔊 1-on-1',         value: '1-on-1'         },
+        )
+    )
+    .addStringOption(opt =>
+      opt.setName('time')
+        .setDescription('Preset start time (ET)')
+        .setRequired(false)
+        .addChoices(
+          { name: '8:40 AM ET',         value: '08:40' },
+          { name: '9:00 AM ET',         value: '09:00' },
+          { name: '9:30 AM ET',         value: '09:30' },
+          { name: '10:00 AM ET',        value: '10:00' },
+          { name: '11:00 AM ET',        value: '11:00' },
+          { name: '2:00 PM ET',         value: '14:00' },
+          { name: '3:00 PM ET',         value: '15:00' },
+          { name: '3:30 AM ET (London)', value: '03:30' },
+        )
+    )
+    .addStringOption(opt =>
+      opt.setName('custom_time')
+        .setDescription('Custom time in HH:MM 24h ET format (e.g. 13:45) — overrides preset')
+        .setRequired(false)
+    )
+    .addStringOption(opt =>
+      opt.setName('note')
+        .setDescription('Optional note shown in the countdown (e.g. "NQ trade review")')
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('vc-cancel')
+    .setDescription('Cancel the active VC countdown (staff only)'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
