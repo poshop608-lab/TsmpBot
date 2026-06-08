@@ -193,6 +193,11 @@ const commands = [
         )
     )
     .addStringOption(opt =>
+      opt.setName('host')
+        .setDescription('Who is hosting this session')
+        .setRequired(true)
+    )
+    .addStringOption(opt =>
       opt.setName('time')
         .setDescription('Preset start time (ET)')
         .setRequired(false)
@@ -215,11 +220,6 @@ const commands = [
     .addStringOption(opt =>
       opt.setName('note')
         .setDescription('Optional note shown in the countdown (e.g. "NQ trade review")')
-        .setRequired(false)
-    )
-    .addStringOption(opt =>
-      opt.setName('host')
-        .setDescription('Who is hosting (defaults to your Discord name)')
         .setRequired(false)
     ),
 

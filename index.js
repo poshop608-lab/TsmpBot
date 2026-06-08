@@ -2533,8 +2533,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const vcChName   = interaction.options.getString('channel');
         const customTime = interaction.options.getString('custom_time');
         const note       = interaction.options.getString('note') ?? null;
-        const hostInput  = interaction.options.getString('host');
-        const host       = hostInput ?? interaction.member.displayName;
+        const host       = interaction.options.getString('host');
 
         // Parse time → next occurrence in ET
         const chosenTime = customTime ?? timeVal;
