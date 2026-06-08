@@ -1321,6 +1321,16 @@ function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live) {
   const secsLeft = startEpoch - now;
   const color = live ? 0x22c55e : secsLeft <= 900 ? 0xfbbf24 : 0x22d3ee;
   const title = live ? '🟢  Session Is Live' : '⏳  Upcoming VC Session';
+
+  // Hardcoded ET display (UTC-4)
+  const etDate = new Date((startEpoch - 4 * 3600) * 1000);
+  const etH = etDate.getUTCHours();
+  const etM = etDate.getUTCMinutes();
+  const etAmPm = etH >= 12 ? 'PM' : 'AM';
+  const etH12 = etH % 12 || 12;
+  const etMStr = String(etM).padStart(2, '0');
+  const etTimeStr = `${etH12}:${etMStr} ${etAmPm} ET`;
+
   let countdownStr;
   if (live) {
     countdownStr = '**NOW LIVE** — jump in!';
@@ -1337,12 +1347,12 @@ function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live) {
     .setTitle(title)
     .addFields(
       { name: 'Channel',    value: `🔊 ${vcChannelName}`, inline: true },
-      { name: 'Start Time', value: `<t:${startEpoch}:t> ET · <t:${startEpoch}:D>`, inline: true },
-      { name: '​',     value: '​', inline: true },
+      { name: 'Start Time (ET)', value: `**${etTimeStr}**`, inline: true },
+      { name: 'Your Timezone',   value: `<t:${startEpoch}:t> · <t:${startEpoch}:D>`, inline: true },
       { name: live ? 'Status' : 'Starting In', value: countdownStr, inline: false },
     );
   if (sessionNote) embed.addFields({ name: 'Note', value: sessionNote, inline: false });
-  embed.setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule' }).setTimestamp();
+  embed.setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule  ·  ET = UTC−4' }).setTimestamp();
   return embed;
 }
 
