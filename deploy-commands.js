@@ -7,6 +7,10 @@ const commands = [
     .setDescription('Check if bot is online'),
 
   new SlashCommandBuilder()
+    .setName('nq')
+    .setDescription('Show current NQ futures price and key levels (~10 min delay)'),
+
+  new SlashCommandBuilder()
     .setName('setup')
     .setDescription('Post the access request button in the roles channel'),
 

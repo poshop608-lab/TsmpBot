@@ -1849,6 +1849,47 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: `Pong! Latency: ${client.ws.ping}ms`, ephemeral: true });
       }
 
+      if (commandName === 'nq') {
+        await interaction.deferReply({ ephemeral: false });
+        try {
+          const res = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/NQ=F?interval=1m&range=1d', {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          const json = await res.json();
+          const meta = json?.chart?.result?.[0]?.meta;
+          if (!meta) return interaction.editReply({ content: 'Failed to fetch NQ price.' });
+          const price     = meta.regularMarketPrice ?? meta.previousClose;
+          const prevClose = meta.previousClose;
+          const change    = price - prevClose;
+          const changePct = (change / prevClose) * 100;
+          const arrow     = change >= 0 ? '🔼' : '🔽';
+          const color     = change >= 0 ? 0x22d3ee : 0xf87171;
+          const tsEpoch   = meta.regularMarketTime;
+          const tsDisc    = tsEpoch ? `<t:${tsEpoch}:R>` : 'unknown';
+          const { pdh, pdl, pwh, pwl, pmh, pml, premh, preml } = _nqLevels;
+          const fmtLvl = v => v != null ? v.toFixed(2) : '—';
+          const embed = new EmbedBuilder()
+            .setColor(color)
+            .setTitle('📊  NQ Futures — Current Price')
+            .addFields(
+              { name: 'Price', value: `**${price.toFixed(2)}**`, inline: true },
+              { name: 'Change', value: `${arrow} ${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`, inline: true },
+              { name: 'Data As Of', value: tsDisc, inline: true },
+              { name: '━━━  Key Levels  ━━━', value:
+                `\`PDH\` ${fmtLvl(pdh)}  ·  \`PDL\` ${fmtLvl(pdl)}\n` +
+                `\`PWH\` ${fmtLvl(pwh)}  ·  \`PWL\` ${fmtLvl(pwl)}\n` +
+                `\`PMH\` ${fmtLvl(pmh)}  ·  \`PML\` ${fmtLvl(pml)}\n` +
+                `\`PreMH\` ${fmtLvl(premh)}  ·  \`PreML\` ${fmtLvl(preml)}`,
+                inline: false },
+            )
+            .setFooter({ text: '⚠️ ~10 min data delay · Yahoo Finance · The Smart Money Paradigm' })
+            .setTimestamp();
+          return interaction.editReply({ embeds: [embed] });
+        } catch (e) {
+          return interaction.editReply({ content: `Error fetching NQ price: ${e.message}` });
+        }
+      }
+
       if (commandName === 'roadmap') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
