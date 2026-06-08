@@ -1346,9 +1346,9 @@ function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live) {
     .setColor(color)
     .setTitle(title)
     .addFields(
-      { name: 'Channel',    value: `🔊 ${vcChannelName}`, inline: true },
-      { name: 'Start Time (ET)', value: `**${etTimeStr}**`, inline: true },
-      { name: 'Your Timezone',   value: `<t:${startEpoch}:t> · <t:${startEpoch}:D>`, inline: true },
+      { name: 'Channel',         value: `🔊 ${vcChannelName}`, inline: true },
+      { name: 'Start Time',      value: `**${etTimeStr}**`, inline: true },
+      { name: 'In Your Timezone', value: `<t:${startEpoch}:t> on <t:${startEpoch}:D>`, inline: true },
       { name: live ? 'Status' : 'Starting In', value: countdownStr, inline: false },
     );
   if (sessionNote) embed.addFields({ name: 'Note', value: sessionNote, inline: false });
