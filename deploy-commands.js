@@ -227,6 +227,10 @@ const commands = [
     .setName('vc-cancel')
     .setDescription('Cancel the active VC countdown (staff only)'),
 
+  new SlashCommandBuilder()
+    .setName('giveaway')
+    .setDescription('Create a giveaway with a live enter button and spin-the-wheel reveal (staff only)'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);

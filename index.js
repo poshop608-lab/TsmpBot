@@ -1448,6 +1448,73 @@ let _lastSweepDay  = null;
 let _lastSweepWeek = null;
 let _lastSweepMonth = null;
 
+// ── Giveaway ──
+const _giveaways = new Map(); // messageId → { channelId, title, prize, hostId, entrants: Set }
+
+async function _spinGiveaway(interaction, messageId) {
+  const gw = _giveaways.get(messageId);
+  if (!gw) return interaction.reply({ content: 'Giveaway not found.', ephemeral: true });
+
+  const entrants = [...gw.entrants];
+  if (entrants.length === 0) {
+    return interaction.reply({ content: 'No one entered the giveaway!', ephemeral: true });
+  }
+
+  await interaction.deferUpdate();
+
+  const ch = interaction.channel;
+  const msg = await ch.messages.fetch(messageId);
+
+  // Slot machine animation — rapid name flashes slowing to a stop
+  const frames = [];
+  for (let i = 0; i < 12; i++) frames.push(entrants[Math.floor(Math.random() * entrants.length)]);
+  // last frame = actual winner
+  const winner = entrants[Math.floor(Math.random() * entrants.length)];
+  frames.push(winner);
+
+  // Speeds: fast → slow (ms delays)
+  const delays = [120, 120, 150, 150, 200, 200, 280, 350, 450, 600, 800, 1100, 1600];
+
+  const spinEmbed = new EmbedBuilder()
+    .setColor(0xFFD700)
+    .setTitle('🎰 Spinning...')
+    .setDescription('`???`')
+    .setFooter({ text: gw.title });
+
+  // Disable both buttons during spin
+  const disabledRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('gw_enter').setLabel(`🎟️ Enter (${entrants.length})`).setStyle(ButtonStyle.Primary).setDisabled(true),
+    new ButtonBuilder().setCustomId(`gw_spin_${messageId}`).setLabel('🎰 Spinning...').setStyle(ButtonStyle.Danger).setDisabled(true),
+  );
+  await msg.edit({ embeds: [spinEmbed], components: [disabledRow] });
+
+  for (let i = 0; i < frames.length; i++) {
+    await new Promise(r => setTimeout(r, delays[i] || 1600));
+    const isLast = i === frames.length - 1;
+    const userId = frames[i];
+    const label = isLast ? `🎉 <@${userId}>` : `🎰 <@${userId}>`;
+    const frame = new EmbedBuilder()
+      .setColor(isLast ? 0x00FF88 : 0xFFD700)
+      .setTitle(isLast ? '🎉 We have a winner!' : '🎰 Spinning...')
+      .setDescription(label)
+      .setFooter({ text: gw.title });
+    await msg.edit({ embeds: [frame], components: [disabledRow] });
+  }
+
+  // Final winner embed — remove buttons
+  const winnerEmbed = new EmbedBuilder()
+    .setColor(0x00FF88)
+    .setTitle('🎉 Giveaway Complete!')
+    .setDescription(`**${gw.title}**\n\n🏆 Winner: <@${winner}>\n🎁 Prize: **${gw.prize}**\n\n*${entrants.length} entrant${entrants.length !== 1 ? 's' : ''}*`)
+    .setFooter({ text: 'The Smart Money Paradigm' })
+    .setTimestamp();
+
+  await msg.edit({ embeds: [winnerEmbed], components: [] });
+  await ch.send({ content: `🎉 Congratulations <@${winner}>! You won **${gw.prize}**!` });
+
+  _giveaways.delete(messageId);
+}
+
 // ── Sweep state persistence ──
 const SWEEP_STATE_FILE = path.join(__dirname, 'data', 'sweep_state.json');
 
@@ -2741,6 +2808,25 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: '✅ VC countdown cancelled.', ephemeral: true });
       }
 
+      // ── /giveaway ──
+      if (commandName === 'giveaway') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        const modal = new ModalBuilder()
+          .setCustomId('giveaway_modal')
+          .setTitle('🎉 Create Giveaway');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('gw_title').setLabel('Giveaway Title').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. Weekend Giveaway')
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('gw_prize').setLabel('Prize').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 1 month free membership')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
       if (commandName === 'clear-welcome') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -2936,6 +3022,35 @@ client.on(Events.InteractionCreate, async interaction => {
         roadmapMessageId = msg.id;
         return interaction.editReply({ content: 'Roadmap reposted with updates.' });
       }
+
+      // ── Giveaway modal submit ──
+      if (interaction.customId === 'giveaway_modal') {
+        await interaction.deferReply({ ephemeral: true });
+        const title = interaction.fields.getTextInputValue('gw_title').trim();
+        const prize = interaction.fields.getTextInputValue('gw_prize').trim();
+
+        const embed = new EmbedBuilder()
+          .setColor(0xFFD700)
+          .setTitle(`🎉  ${title}`)
+          .setDescription(`🎁 **Prize:** ${prize}\n\n👥 **Entrants:** 0\n\nClick **🎟️ Enter Giveaway** to join!\nHost presses **🎰 Spin the Wheel** when ready.`)
+          .setFooter({ text: 'The Smart Money Paradigm  ·  Giveaway' })
+          .setTimestamp();
+
+        const memberRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('gw_enter').setLabel('🎟️ Enter Giveaway').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('gw_spin_PLACEHOLDER').setLabel('🎰 Spin the Wheel').setStyle(ButtonStyle.Danger),
+        );
+
+        const msg = await interaction.channel.send({ embeds: [embed], components: [memberRow] });
+
+        // Replace placeholder with real message ID
+        const spinBtn = new ButtonBuilder().setCustomId(`gw_spin_${msg.id}`).setLabel('🎰 Spin the Wheel').setStyle(ButtonStyle.Danger);
+        const enterBtn = new ButtonBuilder().setCustomId('gw_enter').setLabel('🎟️ Enter Giveaway (0)').setStyle(ButtonStyle.Primary);
+        await msg.edit({ components: [new ActionRowBuilder().addComponents(enterBtn, spinBtn)] });
+
+        _giveaways.set(msg.id, { channelId: interaction.channelId, title, prize, hostId: interaction.user.id, entrants: new Set() });
+        return interaction.editReply({ content: `✅ Giveaway posted! Press **🎰 Spin the Wheel** when you're ready to pick a winner.` });
+      }
     }
 
     // ── Button interactions ──
@@ -2980,6 +3095,43 @@ client.on(Events.InteractionCreate, async interaction => {
           await m.roles.add(VC_ALERT_ROLE_ID);
           return interaction.editReply({ content: '🔔 Added **📅 VC Alerts** — you will be pinged when sessions are scheduled.' });
         }
+      }
+
+      // ── Giveaway buttons ──
+      if (customId === 'gw_enter') {
+        const msgId = interaction.message.id;
+        const gw = _giveaways.get(msgId);
+        if (!gw) return interaction.reply({ content: 'This giveaway is no longer active.', ephemeral: true });
+
+        const userId = interaction.user.id;
+        if (gw.entrants.has(userId)) {
+          return interaction.reply({ content: '✅ You\'re already entered!', ephemeral: true });
+        }
+        gw.entrants.add(userId);
+        const count = gw.entrants.size;
+
+        // Update embed count + button label
+        const updatedEmbed = new EmbedBuilder()
+          .setColor(0xFFD700)
+          .setTitle(`🎉  ${gw.title}`)
+          .setDescription(`🎁 **Prize:** ${gw.prize}\n\n👥 **Entrants:** ${count}\n\nClick **🎟️ Enter Giveaway** to join!\nHost presses **🎰 Spin the Wheel** when ready.`)
+          .setFooter({ text: 'The Smart Money Paradigm  ·  Giveaway' })
+          .setTimestamp(interaction.message.createdTimestamp);
+
+        const updatedRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('gw_enter').setLabel(`🎟️ Enter Giveaway (${count})`).setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`gw_spin_${msgId}`).setLabel('🎰 Spin the Wheel').setStyle(ButtonStyle.Danger),
+        );
+        await interaction.update({ embeds: [updatedEmbed], components: [updatedRow] });
+        return;
+      }
+
+      if (customId.startsWith('gw_spin_')) {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'Only staff can spin the wheel.', ephemeral: true });
+        const msgId = customId.replace('gw_spin_', '');
+        await _spinGiveaway(interaction, msgId);
+        return;
       }
 
       // ── Env day button ──
