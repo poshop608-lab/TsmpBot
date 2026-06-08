@@ -165,6 +165,10 @@ const commands = [
     .setName('setup-sweep-alerts')
     .setDescription('Create Sweep Alerts role, channels, and self-assign button (staff only)'),
 
+  new SlashCommandBuilder()
+    .setName('test-sweep')
+    .setDescription('Fire test sweep alert embeds to the sweep channel (staff only)'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);

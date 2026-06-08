@@ -2166,6 +2166,52 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
+      if (commandName === 'test-sweep') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        if (!SWEEP_ALERT_CH_ID) return interaction.editReply({ content: 'Run `/setup-sweep-alerts` first.' });
+
+        const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
+        if (!ch) return interaction.editReply({ content: 'Sweep alerts channel not found.' });
+
+        const testLevels = [
+          { key: 'test_pdh',    label: 'PDH (Prev Day High)',      dir: 'above', price: 29743.00, role: 'both' },
+          { key: 'test_pdl',    label: 'PDL (Prev Day Low)',       dir: 'below', price: 28822.25, role: 'both' },
+          { key: 'test_pmh',    label: 'PMH (Prev Month High)',    dir: 'above', price: 30807.75, role: 'both' },
+          { key: 'test_premh',  label: 'PreMH (Pre-Mkt High)',     dir: 'above', price: 29500.00, role: 'both' },
+          { key: 'test_tc_lon', label: 'London High (TC)',         dir: 'above', price: 29650.00, role: 'tc'   },
+          { key: 'test_qt_q2',  label: 'NY AM Q1 High (QT)',       dir: 'above', price: 29580.00, role: 'qt'   },
+          { key: 'test_tny',    label: 'TNY (NY AM Q2 Open)',      dir: 'below', price: 29450.00, role: 'qt'   },
+        ];
+
+        for (const t of testLevels) {
+          const emoji   = t.dir === 'above' ? '🔼' : '🔽';
+          const color   = t.dir === 'above' ? 0x22d3ee : 0xf87171;
+          const dirText = t.dir === 'above' ? 'Swept Above' : 'Swept Below';
+          const rolePings = [];
+          if ((t.role === 'both' || t.role === 'tc') && SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
+          if ((t.role === 'both' || t.role === 'qt') && SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
+          const roleTag = t.role === 'both' ? '📈 TC  📐 QT' : t.role === 'tc' ? '📈 Time Cycle' : '📐 QT Theory';
+          const embed = new EmbedBuilder()
+            .setColor(color)
+            .setAuthor({ name: `${emoji} NQ Sweep — ${t.label} ${dirText}` })
+            .setDescription(`**${t.label}** at **${t.price.toFixed(2)}** swept.\nCurrent price: **${t.price.toFixed(2)}**`)
+            .addFields(
+              { name: 'Level', value: t.label, inline: true },
+              { name: 'Price', value: t.price.toFixed(2), inline: true },
+              { name: 'Theory', value: roleTag, inline: true }
+            )
+            .setTimestamp()
+            .setFooter({ text: '⚠️ TEST ALERT — not a real sweep · TSMP Sweep Monitor' });
+          await ch.send({ content: rolePings.length ? rolePings.join(' ') : '*(no roles assigned yet)*', embeds: [embed] });
+        }
+
+        return interaction.editReply({ content: `✅ Sent ${testLevels.length} test alerts to <#${SWEEP_ALERT_CH_ID}>.` });
+      }
+
       if (commandName === 'setup-sweep-alerts') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
