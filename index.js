@@ -2410,6 +2410,19 @@ client.once(Events.ClientReady, () => {
     if (sweepRolesCh) { SWEEP_ROLES_CH_ID = sweepRolesCh.id; }
   }
 
+  // Refresh calendar cache on startup so data is always current after each Railway deploy
+  (async () => {
+    for (const week of ['thisweek', 'nextweek']) {
+      try {
+        const events = await _fetchInvesting(week);
+        if (Array.isArray(events) && events.length) {
+          fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(events));
+          console.log(`Startup cache refresh (${week}): ${events.length} events`);
+        }
+      } catch (e) { console.warn(`Startup cache refresh failed (${week}): ${e.message}`); }
+    }
+  })();
+
   // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
   setTimeout(() => {
     pollMacroNews().catch(e => console.error('macro news poll err:', e.message));
