@@ -1484,12 +1484,14 @@ async function _yfRefreshAuth() {
 
   const cookie = await new Promise((resolve, reject) => {
     try {
-      const req = https.get('https://finance.yahoo.com/quote/NQ%3DF/', { headers: { 'User-Agent': UA } }, (res) => {
+      const req = https.get('https://fc.yahoo.com/', { headers: { 'User-Agent': UA } }, (res) => {
         const setCookie = res.headers['set-cookie'] || [];
+        const a3 = setCookie.find(c => c.startsWith('A3='));
         const a1 = setCookie.find(c => c.startsWith('A1='));
+        const found = a3 || a1;
         res.resume();
-        if (a1) resolve(a1.split(';')[0]);
-        else reject(new Error('No A1 cookie in response'));
+        if (found) resolve(found.split(';')[0]);
+        else reject(new Error('No cookie in fc.yahoo.com response'));
       });
       req.on('error', e => reject(wrapErr(e)));
       req.setTimeout(12000, () => { req.destroy(); reject(new Error('cookie request timeout')); });
