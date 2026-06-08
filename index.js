@@ -1454,127 +1454,112 @@ const _giveaways = new Map(); // messageId → { channelId, title, prize, hostId
 async function _buildWheelGif(names, winnerIndex) {
   const GIFEncoder = require('gif-encoder-2');
   const { createCanvas } = require('@napi-rs/canvas');
-  const SIZE = 480;
-  const cx = SIZE / 2, cy = SIZE / 2, radius = 210;
-  const totalFrames = 55;
+  const SIZE = 520, cx = SIZE/2, cy = SIZE/2, radius = 218;
+  const totalFrames = 70;
   const n = names.length;
-  const sliceAngle = (2 * Math.PI) / n;
-  const winnerAngle = -(winnerIndex * sliceAngle + sliceAngle / 2);
-  const totalRotation = Math.PI * 2 * 7 + (Math.PI * 2 - ((-winnerAngle) % (Math.PI * 2)));
-  function easeOut(t) { return 1 - Math.pow(1 - t, 4); }
+  const sliceAngle = (2*Math.PI)/n;
+  const winnerAngle = -(winnerIndex*sliceAngle+sliceAngle/2);
+  const totalRotation = Math.PI*2*7 + (Math.PI*2-((-winnerAngle)%(Math.PI*2)));
+  function easeInOut(t){ return t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2; }
 
   const COLORS = [
-    ['#ff6b6b','#c0392b'],['#ffd93d','#e67e22'],['#6bcb77','#1e8449'],
-    ['#4d96ff','#1a5276'],['#c77dff','#7d3c98'],['#ff9f43','#ca6f1e'],
-    ['#48dbfb','#117a65'],['#ff6b81','#922b21'],['#a29bfe','#6c3483'],['#55efc4','#0e6655'],
+    ['#a78bfa','#6d28d9'],['#FFD700','#b45309'],['#34d399','#065f46'],
+    ['#f472b6','#9d174d'],['#60a5fa','#1e3a8a'],['#fb923c','#7c2d12'],
+    ['#e879f9','#701a75'],['#4ade80','#14532d'],['#f87171','#7f1d1d'],['#38bdf8','#0c4a6e'],
   ];
 
   const encoder = new GIFEncoder(SIZE, SIZE, 'neuquant', true, totalFrames);
   encoder.setDelay(40);
-  encoder.setRepeat(0);
+  encoder.setRepeat(-1);
   encoder.start();
 
   const canvas = createCanvas(SIZE, SIZE);
   const ctx = canvas.getContext('2d');
 
   for (let f = 0; f < totalFrames; f++) {
-    const t = easeOut(f / (totalFrames - 1));
+    const t = easeInOut(f/(totalFrames-1));
     const rotation = t * totalRotation;
 
     ctx.clearRect(0, 0, SIZE, SIZE);
 
-    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, SIZE * 0.8);
-    bg.addColorStop(0, '#1a1a2e');
-    bg.addColorStop(1, '#0a0a14');
-    ctx.fillStyle = bg;
+    // Deep dark bg
+    ctx.fillStyle = '#080810';
     ctx.fillRect(0, 0, SIZE, SIZE);
 
-    // Outer glow ring
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius + 14, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,215,0,0.2)';
-    ctx.lineWidth = 8;
-    ctx.stroke();
+    // Purple/indigo radial glow
+    const bgGlow = ctx.createRadialGradient(cx,cy,0,cx,cy,SIZE*0.7);
+    bgGlow.addColorStop(0,'rgba(100,50,255,0.15)');
+    bgGlow.addColorStop(0.5,'rgba(60,20,160,0.08)');
+    bgGlow.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle = bgGlow; ctx.fillRect(0, 0, SIZE, SIZE);
 
-    // Segments
-    for (let i = 0; i < n; i++) {
-      const startAngle = rotation + i * sliceAngle - Math.PI / 2;
-      const endAngle = startAngle + sliceAngle;
-      const [c1, c2] = COLORS[i % COLORS.length];
-      const midAngle = startAngle + sliceAngle / 2;
-      const gx1 = cx + (radius * 0.2) * Math.cos(midAngle);
-      const gy1 = cy + (radius * 0.2) * Math.sin(midAngle);
-      const gx2 = cx + radius * Math.cos(midAngle);
-      const gy2 = cy + radius * Math.sin(midAngle);
-      const grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
-      grad.addColorStop(0, c1);
-      grad.addColorStop(1, c2);
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, radius, startAngle, endAngle);
-      ctx.closePath();
-      ctx.fillStyle = grad;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      const textR = radius * 0.63;
-      const tx = cx + textR * Math.cos(midAngle);
-      const ty = cy + textR * Math.sin(midAngle);
+    // Multi-layer outer glow rings
+    for (let r = 0; r < 3; r++) {
       ctx.save();
-      ctx.translate(tx, ty);
-      ctx.rotate(midAngle + Math.PI / 2);
-      const fontSize = Math.max(10, Math.min(17, Math.floor(200 / n)));
-      ctx.shadowColor = 'rgba(0,0,0,0.9)';
-      ctx.shadowBlur = 5;
-      ctx.font = `bold ${fontSize}px Arial`;
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(names[i].length > 10 ? names[i].slice(0, 9) + '…' : names[i], 0, 0);
+      ctx.shadowColor = 'rgba(255,200,0,0.4)'; ctx.shadowBlur = 20-r*5;
+      ctx.beginPath(); ctx.arc(cx, cy, radius+10+r*6, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(255,200,0,${0.25-r*0.07})`;
+      ctx.lineWidth = 2-r*0.4; ctx.stroke();
       ctx.restore();
     }
 
-    // Wheel rim
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    // Segments
+    for (let i = 0; i < n; i++) {
+      const sa = rotation+i*sliceAngle-Math.PI/2;
+      const ea = sa+sliceAngle;
+      const ma = sa+sliceAngle/2;
+      const [c1,c2] = COLORS[i%COLORS.length];
+      const grad = ctx.createLinearGradient(cx+(radius*0.15)*Math.cos(ma),cy+(radius*0.15)*Math.sin(ma),cx+radius*Math.cos(ma),cy+radius*Math.sin(ma));
+      grad.addColorStop(0, c1+'cc');
+      grad.addColorStop(1, c2);
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,radius,sa,ea); ctx.closePath();
+      ctx.fillStyle = grad; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();
+
+      // Segment edge glow
+      ctx.save();
+      ctx.shadowColor = c1; ctx.shadowBlur = 8;
+      ctx.strokeStyle = c1+'44'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,radius,sa,ea); ctx.closePath();
+      ctx.stroke(); ctx.restore();
+
+      // Name
+      const textR = radius*0.64;
+      const tx = cx+textR*Math.cos(ma), ty = cy+textR*Math.sin(ma);
+      ctx.save(); ctx.translate(tx,ty); ctx.rotate(ma+Math.PI/2);
+      ctx.shadowColor = 'rgba(0,0,0,0.95)'; ctx.shadowBlur = 6;
+      const fontSize = Math.max(10, Math.min(16, Math.floor(190/n)));
+      ctx.font = `bold ${fontSize}px Arial`;
+      ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(names[i].length>10?names[i].slice(0,9)+'…':names[i], 0, 0);
+      ctx.restore();
+    }
+
+    // Glowing rim
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,200,0,0.6)'; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,200,0,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
 
     // Center hub
-    const hubGlow = ctx.createRadialGradient(cx - 4, cy - 4, 0, cx, cy, 26);
-    hubGlow.addColorStop(0, '#fff9c4');
-    hubGlow.addColorStop(0.4, '#FFD700');
-    hubGlow.addColorStop(1, '#b8860b');
-    ctx.beginPath();
-    ctx.arc(cx, cy, 22, 0, Math.PI * 2);
-    ctx.fillStyle = hubGlow;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    const hub = ctx.createRadialGradient(cx-6,cy-6,0,cx,cy,24);
+    hub.addColorStop(0,'#fff5c0'); hub.addColorStop(0.4,'#FFD700'); hub.addColorStop(1,'#7c2d12');
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,200,0,0.8)'; ctx.shadowBlur = 20;
+    ctx.beginPath(); ctx.arc(cx,cy,22,0,Math.PI*2);
+    ctx.fillStyle = hub; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.restore();
 
     // Glowing diamond pointer
-    ctx.save();
-    ctx.translate(cx, cy - radius - 1);
-    ctx.shadowColor = '#FFD700';
-    ctx.shadowBlur = 14;
-    ctx.beginPath();
-    ctx.moveTo(0, -18);
-    ctx.lineTo(11, 2);
-    ctx.lineTo(0, 12);
-    ctx.lineTo(-11, 2);
-    ctx.closePath();
-    const pGrad = ctx.createLinearGradient(0, -18, 0, 12);
-    pGrad.addColorStop(0, '#fff9c4');
-    pGrad.addColorStop(1, '#FFD700');
-    ctx.fillStyle = pGrad;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    ctx.save(); ctx.translate(cx, cy-radius-1);
+    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 22;
+    ctx.beginPath(); ctx.moveTo(0,-20); ctx.lineTo(13,2); ctx.lineTo(0,14); ctx.lineTo(-13,2); ctx.closePath();
+    const pg = ctx.createLinearGradient(0,-20,0,14);
+    pg.addColorStop(0,'#fff9c4'); pg.addColorStop(1,'#FFD700');
+    ctx.fillStyle = pg; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.restore();
 
     encoder.addFrame(ctx);
@@ -1630,20 +1615,190 @@ async function _spinGiveaway(interaction, messageId) {
     files: [attachment],
   });
 
-  // Short pause then winner reveal
-  await new Promise(r => setTimeout(r, 3000));
+  // Wait for GIF spin duration (~55 frames × 40ms ≈ 2.5s) + buffer
+  await new Promise(r => setTimeout(r, 4000));
 
-  const winnerEmbed = new EmbedBuilder()
-    .setColor(0x00FF88)
-    .setTitle('🎉 We have a winner!')
-    .setDescription(`**${gw.title}**\n\n🏆 **<@${winnerId}>**\n🎁 Prize: **${gw.prize}**\n\n*${entrantIds.length} entrant${entrantIds.length !== 1 ? 's' : ''}*`)
-    .setFooter({ text: 'The Smart Money Paradigm  ·  Giveaway' })
-    .setTimestamp();
+  // Fetch winner avatar
+  const winnerMember = await interaction.guild.members.fetch(winnerId).catch(() => null);
+  const winnerName = winnerMember?.displayName || 'Winner';
+  const avatarURL = winnerMember?.user?.displayAvatarURL({ extension: 'png', size: 256 }) || null;
 
-  await msg.edit({ embeds: [winnerEmbed], components: [] });
-  await ch.send({ content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁` });
+  const cardBuf = await _buildWinnerCard(winnerName, avatarURL, gw.prize, gw.title, entrantIds.length);
+  const cardAttachment = new AttachmentBuilder(cardBuf, { name: 'winner.png' });
+
+  await msg.edit({ embeds: [], components: [] });
+  await ch.send({
+    content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁`,
+    files: [cardAttachment],
+  });
 
   _giveaways.delete(messageId);
+}
+
+async function _buildWinnerCard(winnerName, avatarURL, prize, title, totalEntrants) {
+  const { createCanvas, loadImage } = require('@napi-rs/canvas');
+  const W = 960, H = 420;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+  const rng = (() => { let s=77; return()=>{ s=(s*1664525+1013904223)&0xffffffff; return(s>>>0)/0xffffffff; }; })();
+
+  // Deep dark bg
+  ctx.fillStyle = '#080810';
+  ctx.fillRect(0, 0, W, H);
+
+  // Cinematic center glow — purple/indigo
+  const center = ctx.createRadialGradient(W*0.5,H*0.5,0,W*0.5,H*0.5,W*0.7);
+  center.addColorStop(0,'rgba(120,60,255,0.12)');
+  center.addColorStop(0.4,'rgba(60,30,180,0.08)');
+  center.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=center; ctx.fillRect(0,0,W,H);
+
+  // Left warm gold glow behind avatar
+  const avatarX=195, avatarY=H/2, avatarR=82;
+  const aura=ctx.createRadialGradient(avatarX,avatarY,0,avatarX,avatarY,220);
+  aura.addColorStop(0,'rgba(255,200,0,0.18)');
+  aura.addColorStop(0.5,'rgba(255,150,0,0.08)');
+  aura.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=aura; ctx.fillRect(0,0,W,H);
+
+  // Star field
+  for(let i=0;i<80;i++){
+    ctx.beginPath(); ctx.arc(rng()*W,rng()*H,rng()*1.5+0.2,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,'+(rng()*0.5+0.08)+')'; ctx.fill();
+  }
+
+  // Confetti
+  const cc=['#FFD700','#ff6b6b','#a78bfa','#34d399','#60a5fa','#f472b6'];
+  for(let i=0;i<50;i++){
+    ctx.save(); ctx.translate(rng()*W,rng()*H); ctx.rotate(rng()*Math.PI*2);
+    ctx.globalAlpha=rng()*0.5+0.15;
+    ctx.fillStyle=cc[Math.floor(rng()*cc.length)];
+    ctx.fillRect(-(rng()*6+2)/2,-(rng()*2+1)/2,rng()*10+4,rng()*4+2);
+    ctx.restore();
+  }
+  ctx.globalAlpha=1;
+
+  // Top gold shimmer bar
+  const topBar=ctx.createLinearGradient(0,0,W,0);
+  topBar.addColorStop(0,'rgba(255,200,0,0)');
+  topBar.addColorStop(0.3,'rgba(255,200,0,0.6)');
+  topBar.addColorStop(0.7,'rgba(255,200,0,0.6)');
+  topBar.addColorStop(1,'rgba(255,200,0,0)');
+  ctx.fillStyle=topBar; ctx.fillRect(0,0,W,2);
+
+  // Bottom purple shimmer bar
+  const botBar=ctx.createLinearGradient(0,0,W,0);
+  botBar.addColorStop(0,'rgba(180,100,255,0)');
+  botBar.addColorStop(0.3,'rgba(180,100,255,0.4)');
+  botBar.addColorStop(0.7,'rgba(180,100,255,0.4)');
+  botBar.addColorStop(1,'rgba(180,100,255,0)');
+  ctx.fillStyle=botBar; ctx.fillRect(0,H-2,W,2);
+
+  // Avatar glow rings
+  for(let r=0;r<3;r++){
+    ctx.save();
+    ctx.shadowColor='rgba(255,200,0,0.5)'; ctx.shadowBlur=28-r*6;
+    ctx.beginPath(); ctx.arc(avatarX,avatarY,avatarR+5+r*4,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,200,0,'+(0.45-r*0.12)+')';
+    ctx.lineWidth=1.8-r*0.3; ctx.stroke(); ctx.restore();
+  }
+
+  // Avatar circle
+  ctx.save();
+  ctx.beginPath(); ctx.arc(avatarX,avatarY,avatarR,0,Math.PI*2); ctx.clip();
+  const avBg=ctx.createRadialGradient(avatarX-20,avatarY-20,0,avatarX,avatarY,avatarR);
+  avBg.addColorStop(0,'#1e1830'); avBg.addColorStop(1,'#0d0b18');
+  ctx.fillStyle=avBg; ctx.fillRect(avatarX-avatarR,avatarY-avatarR,avatarR*2,avatarR*2);
+  if (avatarURL) {
+    try {
+      const img = await loadImage(avatarURL);
+      ctx.drawImage(img, avatarX-avatarR, avatarY-avatarR, avatarR*2, avatarR*2);
+    } catch { _drawAvatarInitial(ctx, winnerName, avatarX, avatarY); }
+  } else { _drawAvatarInitial(ctx, winnerName, avatarX, avatarY); }
+  ctx.restore();
+
+  // Vertical divider with glow
+  const divX=330, PAD=48;
+  ctx.save();
+  ctx.shadowColor='rgba(255,200,0,0.3)'; ctx.shadowBlur=10;
+  const divG=ctx.createLinearGradient(0,40,0,H-40);
+  divG.addColorStop(0,'rgba(255,200,0,0)');
+  divG.addColorStop(0.2,'rgba(255,200,0,0.3)');
+  divG.addColorStop(0.8,'rgba(255,200,0,0.3)');
+  divG.addColorStop(1,'rgba(255,200,0,0)');
+  ctx.strokeStyle=divG; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(divX,40); ctx.lineTo(divX,H-40); ctx.stroke(); ctx.restore();
+
+  ctx.save(); ctx.translate(divX,H/2); ctx.rotate(Math.PI/4);
+  ctx.shadowColor='rgba(255,200,0,0.7)'; ctx.shadowBlur=14;
+  ctx.strokeStyle='rgba(255,200,0,0.8)'; ctx.lineWidth=1.2;
+  ctx.strokeRect(-4,-4,8,8); ctx.restore();
+
+  const tx=divX+38;
+
+  // Brand
+  ctx.fillStyle='rgba(255,255,255,0.22)'; ctx.font='10px Jakarta400';
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.fillText('T H E   S M A R T   M O N E Y   P A R A D I G M', tx, 68);
+
+  const ruleG=ctx.createLinearGradient(tx,0,W-PAD,0);
+  ruleG.addColorStop(0,'rgba(255,200,0,0.5)');
+  ruleG.addColorStop(0.4,'rgba(255,200,0,0.12)');
+  ruleG.addColorStop(1,'rgba(255,200,0,0)');
+  ctx.strokeStyle=ruleG; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(tx,78); ctx.lineTo(W-PAD,78); ctx.stroke();
+
+  // WINNER
+  ctx.save();
+  ctx.shadowColor='rgba(255,200,0,0.9)'; ctx.shadowBlur=16;
+  ctx.fillStyle='#FFD700'; ctx.font='bold 13px Jakarta700';
+  ctx.fillText('🏆  W I N N E R', tx, 112); ctx.restore();
+
+  // Name
+  const nfs=winnerName.length>18?34:winnerName.length>12?42:50;
+  ctx.save();
+  ctx.shadowColor='rgba(255,255,255,0.55)'; ctx.shadowBlur=30;
+  ctx.fillStyle='#ffffff'; ctx.font='bold '+nfs+'px Jakarta700';
+  ctx.fillText(winnerName.length>22?winnerName.slice(0,21)+'...':winnerName, tx, 178); ctx.restore();
+
+  // Mid divider
+  const midG=ctx.createLinearGradient(tx,0,tx+480,0);
+  midG.addColorStop(0,'rgba(255,255,255,0.18)'); midG.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.strokeStyle=midG; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(tx,200); ctx.lineTo(tx+480,200); ctx.stroke();
+
+  // PRIZE label
+  ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='10px Jakarta400';
+  ctx.fillText('P R I Z E', tx, 228);
+
+  // Prize — purple glow
+  const pfs=prize.length>30?20:prize.length>20?24:28;
+  ctx.save();
+  ctx.shadowColor='rgba(180,100,255,0.8)'; ctx.shadowBlur=18;
+  ctx.fillStyle='#c4b5fd'; ctx.font='bold '+pfs+'px Jakarta700';
+  ctx.fillText(prize.length>38?prize.slice(0,37)+'...':prize, tx, 264); ctx.restore();
+
+  // Footer
+  ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.font='12px Jakarta400';
+  ctx.fillText(title+'   ·   '+totalEntrants+' entrant'+(totalEntrants!==1?'s':''), tx, 318);
+
+  // CONGRATULATIONS
+  ctx.save();
+  ctx.shadowColor='rgba(255,200,0,0.5)'; ctx.shadowBlur=10;
+  ctx.fillStyle='rgba(255,200,0,0.4)'; ctx.font='10px Jakarta400';
+  ctx.textAlign='right';
+  ctx.fillText('C O N G R A T U L A T I O N S', W-PAD, H-PAD); ctx.restore();
+
+  return canvas.toBuffer('image/png');
+}
+
+function _drawAvatarInitial(ctx, name, x, y) {
+  ctx.save();
+  ctx.shadowColor='rgba(255,200,0,0.9)'; ctx.shadowBlur=22;
+  ctx.font='bold 58px Jakarta700'; ctx.fillStyle='#FFD700';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(name[0].toUpperCase(), x, y);
+  ctx.restore();
 }
 
 // ── Sweep state persistence ──
