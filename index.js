@@ -1667,6 +1667,66 @@ async function _refreshNQLevels() {
   } catch (e) { console.warn('NQ level refresh failed:', e.message); }
 }
 
+async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId) {
+  // Delete existing bot messages in alert-roles to avoid duplicates
+  try {
+    const msgs = await rolesAlertCh.messages.fetch({ limit: 20 });
+    const botMsgs = msgs.filter(m => m.author.id === client.user.id);
+    for (const m of botMsgs.values()) await m.delete().catch(() => {});
+  } catch (_) {}
+
+  const sweepMention = sweepAlertChId ? `<#${sweepAlertChId}>` : '#sweep-alerts';
+  const vcMention    = vcSchedChId    ? `<#${vcSchedChId}>`    : '#vc-schedule';
+
+  const embed = new EmbedBuilder()
+    .setColor(0x22d3ee)
+    .setTitle('🔔  Alert Roles')
+    .setDescription('Select the alerts you want. Click any button to **toggle your role on or off**.')
+    .addFields(
+      {
+        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈  TIME CYCLE ALERTS',
+        value:
+          `Alerts fire in ${sweepMention} · ⚠️ ~10 min data delay\n\n` +
+          '**Universal Levels** *(always active)*\n' +
+          '`PDH / PDL` · `PWH / PWL` · `PMH / PML` · `PreMH / PreML`\n\n' +
+          '**Cross-Session PXH / PXL**\n' +
+          '`Asia H/L` → alerted in **London** · `London H/L` → alerted in **NY AM** · `NY AM H/L` → alerted in **NY PM**',
+        inline: false,
+      },
+      {
+        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📐  QT THEORY ALERTS',
+        value:
+          `Alerts fire in ${sweepMention} · ⚠️ ~10 min data delay\n\n` +
+          '**Universal Levels** *(same as above)*\n' +
+          '`PDH / PDL` · `PWH / PWL` · `PMH / PML` · `PreMH / PreML`\n\n' +
+          '**True Opens** `TAO` 19:30 · `TLO` 01:30 · `TNY` 07:30 · `TPM` 13:30 ET\n\n' +
+          '**90-Min Q Blocks** — previous Q H/L swept in current Q',
+        inline: false,
+      },
+      {
+        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📅  VC SESSION ALERTS',
+        value:
+          `Pings in ${vcMention} when a session is scheduled.\n` +
+          'Countdown updates live · reminders at **4h · 1h · 15min** before start.',
+        inline: false,
+      },
+      {
+        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+        value: 'You can hold **multiple roles**. Tap again to remove.',
+        inline: false,
+      }
+    )
+    .setFooter({ text: 'The Smart Money Paradigm  ·  Toggle roles below' });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('sweep_tc_toggle').setLabel('📈  Time Cycle').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('sweep_qt_toggle').setLabel('📐  QT Theory').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('vc_alert_toggle').setLabel('📅  VC Alerts').setStyle(ButtonStyle.Success),
+  );
+
+  await rolesAlertCh.send({ embeds: [embed], components: [row] });
+}
+
 async function _pollNQSweeps() {
   if (!SWEEP_ALERT_CH_ID) return;
   if (!SWEEP_TC_ROLE_ID && !SWEEP_QT_ROLE_ID) return;
@@ -2577,53 +2637,8 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         SWEEP_ALERT_CH_ID = alertCh.id;
 
-        // Self-assign embed with two buttons
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('sweep_tc_toggle').setLabel('📈  Time Cycle Alerts').setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId('sweep_qt_toggle').setLabel('📐  QT Theory Alerts').setStyle(ButtonStyle.Secondary),
-        );
-        const embed = new EmbedBuilder()
-          .setColor(0x22d3ee)
-          .setTitle('📡  NQ Sweep Alerts')
-          .setDescription(`Select the framework you trade. You can hold **both roles** — alerts fire in <#${alertCh.id}>.\n\n⚠️ **Data has a ~10 minute delay.** Alerts are informational, not real-time execution signals.`)
-          .addFields(
-            {
-              name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈  TIME CYCLE ALERTS',
-              value:
-                '**Universal Levels** *(always active)*\n' +
-                '`PDH / PDL` — Previous Day High & Low\n' +
-                '`PWH / PWL` — Previous Week High & Low\n' +
-                '`PMH / PML` — Previous Month High & Low\n' +
-                '`PreMH / PreML` — Pre-Market High & Low\n\n' +
-                '**Cross-Session PXH / PXL**\n' +
-                '`Asia H/L` built `18:00–02:30 ET` → alerted during **London**\n' +
-                '`London H/L` built `02:30–07:00 ET` → alerted during **NY Morning**\n' +
-                '`NY Morning H/L` built `07:00–11:30 ET` → alerted during **NY PM**',
-              inline: false,
-            },
-            {
-              name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📐  QT THEORY ALERTS',
-              value:
-                '**Universal Levels** *(same as above)*\n' +
-                '`PDH / PDL` · `PWH / PWL` · `PMH / PML` · `PreMH / PreML`\n\n' +
-                '**True Opens** *(Q2 open of each session)*\n' +
-                '`TAO` 19:30 ET · `TLO` 01:30 ET · `TNY` 07:30 ET · `TPM` 13:30 ET\n\n' +
-                '**90-Min Q Block Sweeps** *(previous Q H/L swept in current Q)*\n' +
-                '`Asia Q1` 18:00–19:30 → `Q2` 19:30–21:00 → `Q3` 21:00–22:30\n' +
-                '`London Q1` 00:00–01:30 → `Q2` 01:30–03:00 → `Q3` 03:00–04:30\n' +
-                '`NY AM Q1` 06:00–07:30 → `Q2` 07:30–09:00 → `Q3` 09:00–10:30\n' +
-                '`NY PM Q1` 12:00–13:30 → `Q2` 13:30–15:00 → `Q3` 15:00–16:30',
-              inline: false,
-            },
-            {
-              name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-              value: 'Click a button below to **toggle your role on or off**.',
-              inline: false,
-            }
-          )
-          .setFooter({ text: 'The Smart Money Paradigm  ·  Data via Yahoo Finance  ·  ~10 min data delay' });
-
-        await rolesAlertCh.send({ embeds: [embed], components: [row] });
+        const existingVcCh = guild.channels.cache.find(c => c.name === '📅〢vc-schedule');
+        await _postCombinedAlertRoles(rolesAlertCh, alertCh.id, existingVcCh?.id);
 
         return interaction.editReply({
           content: `✅ Done!\n\n**Roles:** <@&${tcRole.id}> · <@&${qtRole.id}>\n**Alert channel:** <#${alertCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>`,
@@ -2678,16 +2693,9 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         VC_SCHED_CH_ID = vcSchedCh.id;
 
-        // VC self-assign button in alert-roles
-        const vcRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('vc_alert_toggle').setLabel('📅  VC Session Alerts').setStyle(ButtonStyle.Success),
-        );
-        const vcEmbed = new EmbedBuilder()
-          .setColor(0xfbbf24)
-          .setTitle('📅  VC Session Alerts')
-          .setDescription(`Get pinged when a VC session is scheduled.\n\nCountdown updates live in <#${vcSchedCh.id}> with a **15-min warning** before it starts.\n\nClick below to toggle your role.`)
-          .setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule' });
-        await rolesAlertCh.send({ embeds: [vcEmbed], components: [vcRow] });
+        // Post/update combined alert-roles message
+        const sweepAlertChId = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts')?.id;
+        await _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedCh.id);
 
         return interaction.editReply({ content: `✅ Done!\n**Role:** <@&${vcRole.id}>\n**Schedule channel:** <#${vcSchedCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>` });
       }
