@@ -216,6 +216,11 @@ const commands = [
       opt.setName('note')
         .setDescription('Optional note shown in the countdown (e.g. "NQ trade review")')
         .setRequired(false)
+    )
+    .addStringOption(opt =>
+      opt.setName('host')
+        .setDescription('Who is hosting (defaults to your Discord name)')
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()

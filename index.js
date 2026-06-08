@@ -1316,7 +1316,7 @@ const VC_PRESET_TIMES = [
   { label: '3:30 AM ET (London)', value: '03:30' },
 ];
 
-function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live) {
+function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live, host) {
   const now = Math.floor(Date.now() / 1000);
   const secsLeft = startEpoch - now;
   const color = live ? 0x22c55e : secsLeft <= 900 ? 0xfbbf24 : 0x22d3ee;
@@ -1351,6 +1351,7 @@ function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live) {
       { name: 'In Your Timezone', value: `<t:${startEpoch}:t> on <t:${startEpoch}:D>`, inline: true },
       { name: live ? 'Status' : 'Starting In', value: countdownStr, inline: false },
     );
+  if (host) embed.addFields({ name: 'Hosted By', value: `👤 ${host}`, inline: true });
   if (sessionNote) embed.addFields({ name: 'Note', value: sessionNote, inline: false });
   embed.setFooter({ text: 'The Smart Money Paradigm  ·  VC Schedule  ·  ET = UTC−4' }).setTimestamp();
   return embed;
@@ -1358,7 +1359,7 @@ function _buildVcEmbed(startEpoch, vcChannelName, sessionNote, live) {
 
 async function _tickVcCountdown() {
   if (!_vcCountdown) return;
-  const { messageId, vcChannelName, sessionNote, startEpoch, warned15 } = _vcCountdown;
+  const { messageId, vcChannelName, sessionNote, host, startEpoch, warned15 } = _vcCountdown;
   const guild = client.guilds.cache.first();
   if (!guild || !VC_SCHED_CH_ID) return;
   const ch = guild.channels.cache.get(VC_SCHED_CH_ID);
@@ -1376,7 +1377,7 @@ async function _tickVcCountdown() {
   // update embed
   try {
     const msg = await ch.messages.fetch(messageId);
-    await msg.edit({ embeds: [_buildVcEmbed(startEpoch, vcChannelName, sessionNote, live)] });
+    await msg.edit({ embeds: [_buildVcEmbed(startEpoch, vcChannelName, sessionNote, live, host)] });
   } catch (_) {}
 
   // stop after live + 30 min
@@ -2532,6 +2533,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const vcChName   = interaction.options.getString('channel');
         const customTime = interaction.options.getString('custom_time');
         const note       = interaction.options.getString('note') ?? null;
+        const hostInput  = interaction.options.getString('host');
+        const host       = hostInput ?? interaction.member.displayName;
 
         // Parse time → next occurrence in ET
         const chosenTime = customTime ?? timeVal;
@@ -2571,11 +2574,11 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const sentMsg = await ch.send({
           content: pingContent,
-          embeds: [_buildVcEmbed(startEpoch, vcChName, note, false)],
+          embeds: [_buildVcEmbed(startEpoch, vcChName, note, false, host)],
         });
 
         const intervalId = setInterval(() => _tickVcCountdown().catch(() => {}), 60 * 1000);
-        _vcCountdown = { messageId: sentMsg.id, vcChannelName: vcChName, sessionNote: note, startEpoch, intervalId, warned15: false };
+        _vcCountdown = { messageId: sentMsg.id, vcChannelName: vcChName, sessionNote: note, host, startEpoch, intervalId, warned15: false };
 
         return interaction.editReply({ content: `✅ Countdown posted in <#${VC_SCHED_CH_ID}>. Starts <t:${startEpoch}:R>.` });
       }
