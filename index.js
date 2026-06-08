@@ -1451,66 +1451,201 @@ let _lastSweepMonth = null;
 // ── Giveaway ──
 const _giveaways = new Map(); // messageId → { channelId, title, prize, hostId, entrants: Set }
 
+async function _buildWheelGif(names, winnerIndex) {
+  const GIFEncoder = require('gifencoder');
+  const { createCanvas } = require('@napi-rs/canvas');
+  const SIZE = 480;
+  const cx = SIZE / 2, cy = SIZE / 2, radius = 210;
+  const totalFrames = 55;
+  const n = names.length;
+  const sliceAngle = (2 * Math.PI) / n;
+  const winnerAngle = -(winnerIndex * sliceAngle + sliceAngle / 2);
+  const totalRotation = Math.PI * 2 * 7 + (Math.PI * 2 - ((-winnerAngle) % (Math.PI * 2)));
+  function easeOut(t) { return 1 - Math.pow(1 - t, 4); }
+
+  const COLORS = [
+    ['#ff6b6b','#c0392b'],['#ffd93d','#e67e22'],['#6bcb77','#1e8449'],
+    ['#4d96ff','#1a5276'],['#c77dff','#7d3c98'],['#ff9f43','#ca6f1e'],
+    ['#48dbfb','#117a65'],['#ff6b81','#922b21'],['#a29bfe','#6c3483'],['#55efc4','#0e6655'],
+  ];
+
+  const encoder = new GIFEncoder(SIZE, SIZE);
+  const chunks = [];
+  encoder.createReadStream().on('data', d => chunks.push(d));
+  encoder.start();
+  encoder.setRepeat(0);
+  encoder.setDelay(40);
+  encoder.setQuality(15);
+
+  const canvas = createCanvas(SIZE, SIZE);
+  const ctx = canvas.getContext('2d');
+
+  for (let f = 0; f < totalFrames; f++) {
+    const t = easeOut(f / (totalFrames - 1));
+    const rotation = t * totalRotation;
+
+    ctx.clearRect(0, 0, SIZE, SIZE);
+
+    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, SIZE * 0.8);
+    bg.addColorStop(0, '#1a1a2e');
+    bg.addColorStop(1, '#0a0a14');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    // Outer glow ring
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius + 14, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,215,0,0.2)';
+    ctx.lineWidth = 8;
+    ctx.stroke();
+
+    // Segments
+    for (let i = 0; i < n; i++) {
+      const startAngle = rotation + i * sliceAngle - Math.PI / 2;
+      const endAngle = startAngle + sliceAngle;
+      const [c1, c2] = COLORS[i % COLORS.length];
+      const midAngle = startAngle + sliceAngle / 2;
+      const gx1 = cx + (radius * 0.2) * Math.cos(midAngle);
+      const gy1 = cy + (radius * 0.2) * Math.sin(midAngle);
+      const gx2 = cx + radius * Math.cos(midAngle);
+      const gy2 = cy + radius * Math.sin(midAngle);
+      const grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
+      grad.addColorStop(0, c1);
+      grad.addColorStop(1, c2);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, radius, startAngle, endAngle);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      const textR = radius * 0.63;
+      const tx = cx + textR * Math.cos(midAngle);
+      const ty = cy + textR * Math.sin(midAngle);
+      ctx.save();
+      ctx.translate(tx, ty);
+      ctx.rotate(midAngle + Math.PI / 2);
+      const fontSize = Math.max(10, Math.min(17, Math.floor(200 / n)));
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur = 5;
+      ctx.font = `bold ${fontSize}px Arial`;
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(names[i].length > 10 ? names[i].slice(0, 9) + '…' : names[i], 0, 0);
+      ctx.restore();
+    }
+
+    // Wheel rim
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Center hub
+    const hubGlow = ctx.createRadialGradient(cx - 4, cy - 4, 0, cx, cy, 26);
+    hubGlow.addColorStop(0, '#fff9c4');
+    hubGlow.addColorStop(0.4, '#FFD700');
+    hubGlow.addColorStop(1, '#b8860b');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 22, 0, Math.PI * 2);
+    ctx.fillStyle = hubGlow;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Glowing diamond pointer
+    ctx.save();
+    ctx.translate(cx, cy - radius - 1);
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(0, -18);
+    ctx.lineTo(11, 2);
+    ctx.lineTo(0, 12);
+    ctx.lineTo(-11, 2);
+    ctx.closePath();
+    const pGrad = ctx.createLinearGradient(0, -18, 0, 12);
+    pGrad.addColorStop(0, '#fff9c4');
+    pGrad.addColorStop(1, '#FFD700');
+    ctx.fillStyle = pGrad;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+
+    encoder.addFrame(ctx);
+  }
+
+  encoder.finish();
+  await new Promise(r => setTimeout(r, 400));
+  return Buffer.concat(chunks);
+}
+
 async function _spinGiveaway(interaction, messageId) {
   const gw = _giveaways.get(messageId);
   if (!gw) return interaction.reply({ content: 'Giveaway not found.', ephemeral: true });
 
-  const entrants = [...gw.entrants];
-  if (entrants.length === 0) {
-    return interaction.reply({ content: 'No one entered the giveaway!', ephemeral: true });
-  }
+  const entrantIds = [...gw.entrants];
+  if (entrantIds.length === 0) return interaction.reply({ content: 'No one entered!', ephemeral: true });
 
   await interaction.deferUpdate();
 
   const ch = interaction.channel;
   const msg = await ch.messages.fetch(messageId);
 
-  // Slot machine animation — rapid name flashes slowing to a stop
-  const frames = [];
-  for (let i = 0; i < 12; i++) frames.push(entrants[Math.floor(Math.random() * entrants.length)]);
-  // last frame = actual winner
-  const winner = entrants[Math.floor(Math.random() * entrants.length)];
-  frames.push(winner);
-
-  // Speeds: fast → slow (ms delays)
-  const delays = [120, 120, 150, 150, 200, 200, 280, 350, 450, 600, 800, 1100, 1600];
-
-  const spinEmbed = new EmbedBuilder()
-    .setColor(0xFFD700)
-    .setTitle('🎰 Spinning...')
-    .setDescription('`???`')
-    .setFooter({ text: gw.title });
-
-  // Disable both buttons during spin
+  // Disable buttons immediately
   const disabledRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('gw_enter').setLabel(`🎟️ Enter (${entrants.length})`).setStyle(ButtonStyle.Primary).setDisabled(true),
+    new ButtonBuilder().setCustomId('gw_enter').setLabel(`🎟️ Enter (${entrantIds.length})`).setStyle(ButtonStyle.Primary).setDisabled(true),
     new ButtonBuilder().setCustomId(`gw_spin_${messageId}`).setLabel('🎰 Spinning...').setStyle(ButtonStyle.Danger).setDisabled(true),
   );
-  await msg.edit({ embeds: [spinEmbed], components: [disabledRow] });
+  const spinningEmbed = new EmbedBuilder()
+    .setColor(0xFFD700)
+    .setTitle('🎰 Spinning the wheel...')
+    .setDescription(`*${entrantIds.length} entrants — generating wheel...*`)
+    .setFooter({ text: gw.title });
+  await msg.edit({ embeds: [spinningEmbed], components: [disabledRow] });
 
-  for (let i = 0; i < frames.length; i++) {
-    await new Promise(r => setTimeout(r, delays[i] || 1600));
-    const isLast = i === frames.length - 1;
-    const userId = frames[i];
-    const label = isLast ? `🎉 <@${userId}>` : `🎰 <@${userId}>`;
-    const frame = new EmbedBuilder()
-      .setColor(isLast ? 0x00FF88 : 0xFFD700)
-      .setTitle(isLast ? '🎉 We have a winner!' : '🎰 Spinning...')
-      .setDescription(label)
-      .setFooter({ text: gw.title });
-    await msg.edit({ embeds: [frame], components: [disabledRow] });
-  }
+  // Resolve display names
+  const names = await Promise.all(entrantIds.map(async id => {
+    try {
+      const member = await interaction.guild.members.fetch(id);
+      return member.displayName;
+    } catch { return `User`; }
+  }));
 
-  // Final winner embed — remove buttons
+  // Pick winner
+  const winnerIndex = Math.floor(Math.random() * names.length);
+  const winnerId = entrantIds[winnerIndex];
+
+  // Generate GIF
+  const gifBuf = await _buildWheelGif(names, winnerIndex);
+  const attachment = new AttachmentBuilder(gifBuf, { name: 'wheel.gif' });
+
+  // Send GIF as new message
+  await ch.send({
+    content: `🎰 **${gw.title}** — The wheel is spinning!`,
+    files: [attachment],
+  });
+
+  // Short pause then winner reveal
+  await new Promise(r => setTimeout(r, 3000));
+
   const winnerEmbed = new EmbedBuilder()
     .setColor(0x00FF88)
-    .setTitle('🎉 Giveaway Complete!')
-    .setDescription(`**${gw.title}**\n\n🏆 Winner: <@${winner}>\n🎁 Prize: **${gw.prize}**\n\n*${entrants.length} entrant${entrants.length !== 1 ? 's' : ''}*`)
-    .setFooter({ text: 'The Smart Money Paradigm' })
+    .setTitle('🎉 We have a winner!')
+    .setDescription(`**${gw.title}**\n\n🏆 **<@${winnerId}>**\n🎁 Prize: **${gw.prize}**\n\n*${entrantIds.length} entrant${entrantIds.length !== 1 ? 's' : ''}*`)
+    .setFooter({ text: 'The Smart Money Paradigm  ·  Giveaway' })
     .setTimestamp();
 
   await msg.edit({ embeds: [winnerEmbed], components: [] });
-  await ch.send({ content: `🎉 Congratulations <@${winner}>! You won **${gw.prize}**!` });
+  await ch.send({ content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁` });
 
   _giveaways.delete(messageId);
 }
