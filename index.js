@@ -1556,97 +1556,31 @@ try {
 } catch (_) {}
 
 // ── Yahoo Finance cookie+crumb auth ──
-let _yfCookie = null;
-let _yfCrumb  = null;
+
+const YF_PROXY_URL = 'https://yf-proxy.poshop608.workers.dev';
 
 async function _yfRefreshAuth() {
-  const https = require('https');
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-
-  const wrapErr = e => new Error(e?.message || e?.code || JSON.stringify(e) || 'unknown error');
-
-  const cookie = await new Promise((resolve, reject) => {
-    try {
-      const req = https.get('https://fc.yahoo.com/', { headers: { 'User-Agent': UA } }, (res) => {
-        const setCookie = res.headers['set-cookie'] || [];
-        const a3 = setCookie.find(c => c.startsWith('A3='));
-        const a1 = setCookie.find(c => c.startsWith('A1='));
-        const found = a3 || a1;
-        res.resume();
-        if (found) resolve(found.split(';')[0]);
-        else reject(new Error('No cookie in fc.yahoo.com response'));
-      });
-      req.on('error', e => reject(wrapErr(e)));
-      req.setTimeout(12000, () => { req.destroy(); reject(new Error('cookie request timeout')); });
-    } catch (e) { reject(wrapErr(e)); }
-  });
-
-  const crumb = await new Promise((resolve, reject) => {
-    try {
-      const req = https.get('https://query2.finance.yahoo.com/v1/test/getcrumb', {
-        headers: { 'User-Agent': UA, 'Cookie': cookie }
-      }, (res) => {
-        let d = '';
-        res.on('data', c => d += c);
-        res.on('end', () => {
-          const t = d.trim();
-          if (t && !t.startsWith('{')) resolve(t);
-          else reject(new Error('bad crumb response: ' + t.slice(0, 80)));
-        });
-      });
-      req.on('error', e => reject(wrapErr(e)));
-      req.setTimeout(12000, () => { req.destroy(); reject(new Error('crumb request timeout')); });
-    } catch (e) { reject(wrapErr(e)); }
-  });
-
-  _yfCookie = cookie;
-  _yfCrumb  = crumb;
-  console.log('YF auth refreshed, crumb:', crumb.slice(0, 4) + '***');
+  // no-op — proxy handles auth internally
 }
 
 async function _fetchNQCandles(range, interval) {
-  const https = require('https');
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  const url = `${YF_PROXY_URL}?symbol=${encodeURIComponent(NQ_SYMBOL)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`;
 
-  if (!_yfCookie || !_yfCrumb) await _yfRefreshAuth();
-
-  const fetchOnce = (cookie, crumb) => new Promise((resolve, reject) => {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${NQ_SYMBOL}?interval=${interval}&range=${range}&crumb=${encodeURIComponent(crumb)}`;
-    const req = https.get(url, { headers: { 'User-Agent': UA, 'Cookie': cookie } }, (res) => {
-      let d = '';
-      res.on('data', c => d += c);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(d);
-          const result = json?.chart?.result?.[0];
-          if (!result) reject(new Error('no result: ' + d.slice(0, 120)));
-          else resolve(result);
-        } catch (e) { reject(e); }
-      });
-    });
-    req.on('error', e => reject(new Error(e?.code || e?.message || String(e))));
-    req.setTimeout(8000, () => { req.destroy(); reject(new Error('ETIMEDOUT')); });
-  });
-
-  // retry up to 3 times — handles transient ETIMEDOUT on Railway
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      return await fetchOnce(_yfCookie, _yfCrumb);
+      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      const json = await res.json();
+      if (json.error) throw new Error('proxy error: ' + json.error);
+      const result = json?.chart?.result?.[0];
+      if (!result) throw new Error('no chart result: ' + JSON.stringify(json).slice(0, 120));
+      return result;
     } catch (e) {
-      const isTimeout = e.message === 'ETIMEDOUT' || e.message === 'fetch timeout';
-      const isAuthErr = e.message?.includes('no result') || e.message?.includes('Unauthorized');
-      if (attempt === 3) throw e;
-      if (isAuthErr) {
-        console.warn(`YF auth error (attempt ${attempt}), refreshing:`, e.message);
-        await _yfRefreshAuth();
-      } else if (isTimeout) {
-        console.warn(`YF timeout (attempt ${attempt}), retrying...`);
-        await new Promise(r => setTimeout(r, 1000 * attempt));
-      } else {
-        throw e; // non-retryable error
-      }
+      lastErr = e;
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
     }
   }
+  throw lastErr;
 }
 
 async function _refreshNQLevels() {
@@ -3340,17 +3274,11 @@ client.once(Events.ClientReady, () => {
     }
   })();
 
-  // Start NQ sweep monitor — auth first (non-fatal), then poll every 30s
-  _yfRefreshAuth()
-    .then(() => _refreshNQLevels())
+  // Start NQ sweep monitor — init levels, then poll every 30s
+  _refreshNQLevels()
     .catch(e => console.warn('NQ init warning (will retry on poll):', e?.message || e?.code || String(e)));
 
-  // Refresh cookie+crumb every 6 hours
-  setInterval(() => {
-    _yfRefreshAuth().catch(e => console.warn('YF auth refresh failed:', e?.message || String(e)));
-  }, 6 * 60 * 60 * 1000);
-
-  // Poll every 30s regardless — _fetchNQCandles retries auth internally on each failure
+  // Poll every 30s
   setInterval(() => {
     _pollNQSweeps().catch(e => console.warn('sweep poll err:', e?.message || String(e)));
   }, SWEEP_POLL_MS);
