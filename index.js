@@ -1498,7 +1498,7 @@ async function _pollNQSweeps() {
           { name: 'Theory', value: roleTag, inline: true }
         )
         .setTimestamp()
-        .setFooter({ text: '⚠️ ~10 min delay outside market hours · TSMP Sweep Monitor · The Smart Money Paradigm' });
+        .setFooter({ text: '⚠️ ~10 min data delay · TSMP Sweep Monitor · The Smart Money Paradigm' });
       await ch.send({ content: rolePings.join(' '), embeds: [embed] });
       console.log(`Sweep: ${key} ${dirText} @ ${lvlPrice}`);
     }
@@ -2276,7 +2276,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const embed = new EmbedBuilder()
           .setColor(0x22d3ee)
           .setTitle('📡  NQ Sweep Alerts')
-          .setDescription(`Select the framework you trade. You can hold **both roles** — alerts fire in <#${alertCh.id}>.\n\n⚠️ **Note: ~10 minute data delay.** Alerts are informational, not real-time execution signals.`)
+          .setDescription(`Select the framework you trade. You can hold **both roles** — alerts fire in <#${alertCh.id}>.\n\n⚠️ **Data has a ~10 minute delay.** Alerts are informational, not real-time execution signals.`)
           .addFields(
             {
               name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈  TIME CYCLE ALERTS',
@@ -2312,7 +2312,7 @@ client.on(Events.InteractionCreate, async interaction => {
               inline: false,
             }
           )
-          .setFooter({ text: 'The Smart Money Paradigm  ·  Data via Yahoo Finance  ·  ~10 min delay outside market hours' });
+          .setFooter({ text: 'The Smart Money Paradigm  ·  Data via Yahoo Finance  ·  ~10 min data delay' });
 
         await rolesAlertCh.send({ embeds: [embed], components: [row] });
 
