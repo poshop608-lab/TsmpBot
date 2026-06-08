@@ -1294,8 +1294,26 @@ let SWEEP_ROLES_CH_ID  = null;  // #🔔〢alert-roles channel
 let VC_ALERT_ROLE_ID   = null;  // 📅 VC Alerts role
 let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 
-// active countdown: { messageId, vcChannelId, vcChannelName, sessionNote, startEpoch, intervalId, warned15 }
+// active countdown: { messageId, vcChannelName, sessionNote, host, startEpoch, intervalId, warned15 }
 let _vcCountdown = null;
+
+const VC_STATE_FILE = path.join(__dirname, 'data', 'vc_countdown.json');
+
+function _vcSave() {
+  if (!_vcCountdown) {
+    try { fs.unlinkSync(VC_STATE_FILE); } catch (_) {}
+    return;
+  }
+  const { messageId, vcChannelName, sessionNote, host, startEpoch, warned15 } = _vcCountdown;
+  fs.writeFileSync(VC_STATE_FILE, JSON.stringify({ messageId, vcChannelName, sessionNote, host, startEpoch, warned15 }));
+}
+
+function _vcLoad() {
+  try {
+    const raw = fs.readFileSync(VC_STATE_FILE, 'utf8');
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
 
 const VC_CHANNELS = [
   { label: '🔊  Live Trading',   name: 'Live Trading'   },
@@ -1372,6 +1390,7 @@ async function _tickVcCountdown() {
   // 15-min warning ping
   if (!warned15 && secsLeft > 0 && secsLeft <= 900 && VC_ALERT_ROLE_ID) {
     _vcCountdown.warned15 = true;
+    _vcSave();
     await ch.send({ content: `<@&${VC_ALERT_ROLE_ID}> 🔔 **${vcChannelName}** starts in ~15 minutes! <t:${startEpoch}:R>` });
   }
 
@@ -1385,6 +1404,7 @@ async function _tickVcCountdown() {
   if (secsLeft < -(30 * 60)) {
     clearInterval(_vcCountdown.intervalId);
     _vcCountdown = null;
+    _vcSave();
   }
 }
 
@@ -2645,6 +2665,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (_vcCountdown) {
           clearInterval(_vcCountdown.intervalId);
           _vcCountdown = null;
+          _vcSave();
         }
 
         const ch = guild.channels.cache.get(VC_SCHED_CH_ID);
@@ -2662,6 +2683,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const intervalId = setInterval(() => _tickVcCountdown().catch(() => {}), 60 * 1000);
         _vcCountdown = { messageId: sentMsg.id, vcChannelName: vcChName, sessionNote: note, host, startEpoch, intervalId, warned15: false };
+        _vcSave();
 
         return interaction.editReply({ content: `✅ Countdown posted in <#${VC_SCHED_CH_ID}>. Starts <t:${startEpoch}:R>.` });
       }
@@ -2687,6 +2709,7 @@ client.on(Events.InteractionCreate, async interaction => {
           }
         } catch (_) {}
         _vcCountdown = null;
+        _vcSave();
         return interaction.reply({ content: '✅ VC countdown cancelled.', ephemeral: true });
       }
 
@@ -3198,6 +3221,16 @@ client.once(Events.ClientReady, () => {
     if (vcRole) { VC_ALERT_ROLE_ID = vcRole.id; }
     const vcSchedCh = guild.channels.cache.find(c => c.name === '📅〢vc-schedule');
     if (vcSchedCh) { VC_SCHED_CH_ID = vcSchedCh.id; }
+
+    // Restore VC countdown from file (survives Railway restarts)
+    const saved = _vcLoad();
+    if (saved && saved.startEpoch > Math.floor(Date.now() / 1000) - 30 * 60) {
+      const intervalId = setInterval(() => _tickVcCountdown().catch(() => {}), 60 * 1000);
+      _vcCountdown = { ...saved, intervalId };
+      console.log(`VC countdown restored: ${saved.vcChannelName} at <t:${saved.startEpoch}:R>`);
+    } else if (saved) {
+      _vcSave(); // expired — clear file
+    }
   }
 
   // Refresh calendar cache on startup so data is always current after each Railway deploy
