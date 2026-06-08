@@ -1651,29 +1651,34 @@ async function _fetchNQCandles(range, interval) {
 
 async function _refreshNQLevels() {
   try {
-    // PDH/PDL — 5d daily, second-to-last candle
+    // PDH/PDL — 5d daily, second-to-last complete candle
     const daily = await _fetchNQCandles('5d', '1d');
-    const dh = daily.indicators.quote[0].high;
-    const dl = daily.indicators.quote[0].low;
-    if (dh.length >= 2) {
-      _nqLevels.pdh = dh[dh.length - 2];
-      _nqLevels.pdl = dl[dl.length - 2];
-    }
-    // PWH/PWL — 3mo weekly, second-to-last candle
+    const dhRaw = daily.indicators.quote[0].high;
+    const dlRaw = daily.indicators.quote[0].low;
+    const dhClean = dhRaw.filter(v => v != null);
+    const dlClean = dlRaw.filter(v => v != null);
+    if (dhClean.length >= 2) { _nqLevels.pdh = dhClean[dhClean.length - 2]; _nqLevels.pdl = dlClean[dlClean.length - 2]; }
+
+    // PWH/PWL — 3mo weekly, second-to-last complete candle
     const weekly = await _fetchNQCandles('3mo', '1wk');
-    const wh = weekly.indicators.quote[0].high;
-    const wl = weekly.indicators.quote[0].low;
-    if (wh.length >= 2) {
-      _nqLevels.pwh = wh[wh.length - 2];
-      _nqLevels.pwl = wl[wl.length - 2];
-    }
-    // PMH/PML — 1y monthly, second-to-last candle
-    const monthly = await _fetchNQCandles('1y', '1mo');
-    const mh = monthly.indicators.quote[0].high;
-    const ml = monthly.indicators.quote[0].low;
-    if (mh.length >= 2) {
-      _nqLevels.pmh = mh[mh.length - 2];
-      _nqLevels.pml = ml[ml.length - 2];
+    const whRaw = weekly.indicators.quote[0].high;
+    const wlRaw = weekly.indicators.quote[0].low;
+    const whClean = whRaw.filter(v => v != null);
+    const wlClean = wlRaw.filter(v => v != null);
+    if (whClean.length >= 2) { _nqLevels.pwh = whClean[whClean.length - 2]; _nqLevels.pwl = wlClean[wlClean.length - 2]; }
+    // PMH/PML — 2y monthly, second-to-last complete candle (skip nulls)
+    const monthly = await _fetchNQCandles('2y', '1mo');
+    const mhRaw = monthly.indicators.quote[0].high;
+    const mlRaw = monthly.indicators.quote[0].low;
+    // Filter out null/undefined (incomplete current candle may be null)
+    const mhClean = mhRaw.filter(v => v != null);
+    const mlClean = mlRaw.filter(v => v != null);
+    if (mhClean.length >= 2) {
+      _nqLevels.pmh = mhClean[mhClean.length - 2];
+      _nqLevels.pml = mlClean[mlClean.length - 2];
+    } else if (mhClean.length === 1) {
+      _nqLevels.pmh = mhClean[0];
+      _nqLevels.pml = mlClean[0];
     }
     console.log('NQ levels refreshed:', JSON.stringify(_nqLevels));
   } catch (e) { console.warn('NQ level refresh failed:', e.message); }
@@ -1784,12 +1789,14 @@ async function _pollNQSweeps() {
     if (_lastSweepWeek !== weekN) {
       _lastSweepWeek = weekN;
       ['pwh','pwl'].forEach(k => delete _swept[k]);
+      await _refreshNQLevels(); // fetch new PWH/PWL
     }
 
     // ── Monthly reset ──
     if (_lastSweepMonth !== monthN) {
       _lastSweepMonth = monthN;
       ['pmh','pml'].forEach(k => delete _swept[k]);
+      await _refreshNQLevels(); // fetch new PMH/PML
     }
 
     const guild = client.guilds.cache.first();
