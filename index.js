@@ -1452,7 +1452,7 @@ let _lastSweepMonth = null;
 const _giveaways = new Map(); // messageId → { channelId, title, prize, hostId, entrants: Set }
 
 async function _buildWheelGif(names, winnerIndex) {
-  const GIFEncoder = require('gifencoder');
+  const GIFEncoder = require('gif-encoder-2');
   const { createCanvas } = require('@napi-rs/canvas');
   const SIZE = 480;
   const cx = SIZE / 2, cy = SIZE / 2, radius = 210;
@@ -1469,13 +1469,10 @@ async function _buildWheelGif(names, winnerIndex) {
     ['#48dbfb','#117a65'],['#ff6b81','#922b21'],['#a29bfe','#6c3483'],['#55efc4','#0e6655'],
   ];
 
-  const encoder = new GIFEncoder(SIZE, SIZE);
-  const chunks = [];
-  encoder.createReadStream().on('data', d => chunks.push(d));
-  encoder.start();
-  encoder.setRepeat(0);
+  const encoder = new GIFEncoder(SIZE, SIZE, 'neuquant', true, totalFrames);
   encoder.setDelay(40);
-  encoder.setQuality(15);
+  encoder.setRepeat(0);
+  encoder.start();
 
   const canvas = createCanvas(SIZE, SIZE);
   const ctx = canvas.getContext('2d');
@@ -1584,8 +1581,7 @@ async function _buildWheelGif(names, winnerIndex) {
   }
 
   encoder.finish();
-  await new Promise(r => setTimeout(r, 400));
-  return Buffer.concat(chunks);
+  return encoder.out.getData();
 }
 
 async function _spinGiveaway(interaction, messageId) {
