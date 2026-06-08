@@ -1624,16 +1624,28 @@ async function _fetchNQCandles(range, interval) {
         } catch (e) { reject(e); }
       });
     });
-    req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('fetch timeout')); });
+    req.on('error', e => reject(new Error(e?.code || e?.message || String(e))));
+    req.setTimeout(8000, () => { req.destroy(); reject(new Error('ETIMEDOUT')); });
   });
 
-  try {
-    return await fetchOnce(_yfCookie, _yfCrumb);
-  } catch (e) {
-    console.warn('YF fetch failed, refreshing auth:', e.message);
-    await _yfRefreshAuth();
-    return await fetchOnce(_yfCookie, _yfCrumb);
+  // retry up to 3 times — handles transient ETIMEDOUT on Railway
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await fetchOnce(_yfCookie, _yfCrumb);
+    } catch (e) {
+      const isTimeout = e.message === 'ETIMEDOUT' || e.message === 'fetch timeout';
+      const isAuthErr = e.message?.includes('no result') || e.message?.includes('Unauthorized');
+      if (attempt === 3) throw e;
+      if (isAuthErr) {
+        console.warn(`YF auth error (attempt ${attempt}), refreshing:`, e.message);
+        await _yfRefreshAuth();
+      } else if (isTimeout) {
+        console.warn(`YF timeout (attempt ${attempt}), retrying...`);
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      } else {
+        throw e; // non-retryable error
+      }
+    }
   }
 }
 
