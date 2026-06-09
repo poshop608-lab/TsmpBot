@@ -1862,7 +1862,7 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
       {
         name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈  TIME CYCLE ALERTS',
         value:
-          `Alerts fire in ${sweepMention} · ⚠️ ~10 min data delay\n\n` +
+          `Alerts fire in ${sweepMention} · real-time via TradingView webhook\n\n` +
           '**Universal Levels** — always active, lock once swept\n' +
           '`PDH / PDL` — Previous Day High / Low\n' +
           '`PWH / PWL` — Previous Week High / Low\n' +
@@ -1872,11 +1872,7 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
           '`ASH / ASL` — Asia High / Low *(18:00–02:30)* → alerted during London\n' +
           '`LOH / LOL` — London High / Low *(02:30–07:00)* → alerted during NY AM\n' +
           '`NYAH / NYAL` — NY Morning High / Low *(07:00–11:30)* → alerted during NY PM\n' +
-          '`NYPH / NYPL` — NY Afternoon High / Low *(11:30–16:00)* → alerted during Asia\n\n' +
-          '**AMD 90-Min Blocks** — each block\'s H/L alerted in the next block, once only\n' +
-          'London `A 02:30` → `M 04:00` → `D 05:30` → alerts into NY AM\n' +
-          'NY AM `A 07:00` → `M 08:30` → `D 10:00` → alerts into NY PM\n' +
-          'NY PM `A 11:30` → `M 13:00` → `D 14:30` → alerts into Asia',
+          '`NYPH / NYPL` — NY Afternoon High / Low *(11:30–16:00)* → alerted during Asia',
         inline: false,
       },
       {

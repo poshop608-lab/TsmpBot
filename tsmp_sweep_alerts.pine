@@ -1,0 +1,218 @@
+// TSMP Sweep Alerts v1.0 — auto-detects NQ key level sweeps + fires webhooks
+// Place on NQ1! 1m or 5m chart. Set up ONE alert using "Any alert() call" condition.
+//@version=6
+indicator("TSMP Sweep Alerts", overlay=true)
+
+// ─── SETTINGS ───────────────────────────────────────────────────────────────
+var g_bot = "Bot Settings"
+var g_disp = "Display"
+
+webhook_url = input.string("https://tsmpbot-production.up.railway.app/sweep", "Webhook URL", group=g_bot)
+secret      = input.string("tsmp_sweep_secret", "Secret", group=g_bot)
+ticker_sym  = input.string("NQ", "Ticker label", group=g_bot)
+
+show_lines  = input.bool(true, "Show level lines", group=g_disp)
+
+// ─── ET TIME HELPERS ─────────────────────────────────────────────────────────
+// ET = UTC-4 (DST summer). Change to -5 in Nov-Mar.
+ET_OFFSET_MIN = -4 * 60
+et_time = math.floor((time / 60000 + ET_OFFSET_MIN) % 1440)  // 0–1439 minutes since ET midnight
+et_hm(h, m) => h * 60 + m
+
+// ─── SESSION WINDOWS (ET minutes) ────────────────────────────────────────────
+in_asia()    => et_time >= et_hm(18, 0) or et_time < et_hm(2, 30)
+in_london()  => et_time >= et_hm(2, 30)  and et_time < et_hm(7, 0)
+in_nyam()    => et_time >= et_hm(7, 0)   and et_time < et_hm(11, 30)
+in_nypm()    => et_time >= et_hm(11, 30) and et_time < et_hm(16, 0)
+in_pre()     => et_time >= et_hm(7, 0)   and et_time < et_hm(9, 30)
+
+// ─── SESSION H/L TRACKING ────────────────────────────────────────────────────
+var float ash  = na, var float asl  = na
+var float loh  = na, var float lol  = na
+var float nyah = na, var float nyal = na
+var float nyph = na, var float nypl = na
+var float premh = na, var float preml = na
+
+// Detect new day (ET midnight = 00:00 ET)
+new_day_et = et_time < et_time[1] and et_time < 30  // crossed midnight
+
+// Detect session starts
+asia_start   = in_asia()   and not in_asia()[1]
+london_start = in_london() and not in_london()[1]
+nyam_start   = in_nyam()   and not in_nyam()[1]
+nypm_start   = in_nypm()   and not in_nypm()[1]
+pre_start    = in_pre()    and not in_pre()[1]
+
+// Reset on session open
+if asia_start
+    ash := high
+    asl := low
+if london_start
+    loh := high
+    lol := low
+if nyam_start or pre_start
+    nyah  := high
+    nyal  := low
+    premh := high
+    preml := low
+if nypm_start
+    nyph := high
+    nypl := low
+
+// Build H/L during session
+if in_asia()
+    ash := na(ash) ? high : math.max(ash, high)
+    asl := na(asl) ? low  : math.min(asl, low)
+if in_london()
+    loh := na(loh) ? high : math.max(loh, high)
+    lol := na(lol) ? low  : math.min(lol, low)
+if in_nyam()
+    nyah := na(nyah) ? high : math.max(nyah, high)
+    nyal := na(nyal) ? low  : math.min(nyal, low)
+if in_nypm()
+    nyph := na(nyph) ? high : math.max(nyph, high)
+    nypl := na(nypl) ? low  : math.min(nypl, low)
+if in_pre()
+    premh := na(premh) ? high : math.max(premh, high)
+    preml := na(preml) ? low  : math.min(preml, low)
+
+// ─── UNIVERSAL LEVELS (daily/weekly/monthly) ─────────────────────────────────
+pdh = request.security(syminfo.tickerid, "D", high[1],  lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1],   lookahead=barmerge.lookahead_on)
+pwh = request.security(syminfo.tickerid, "W", high[1],  lookahead=barmerge.lookahead_on)
+pwl = request.security(syminfo.tickerid, "W", low[1],   lookahead=barmerge.lookahead_on)
+pmh = request.security(syminfo.tickerid, "M", high[1],  lookahead=barmerge.lookahead_on)
+pml = request.security(syminfo.tickerid, "M", low[1],   lookahead=barmerge.lookahead_on)
+
+// ─── ONE-SHOT FIRE FLAGS ─────────────────────────────────────────────────────
+var bool f_pdh  = false, var bool f_pdl  = false
+var bool f_pwh  = false, var bool f_pwl  = false
+var bool f_pmh  = false, var bool f_pml  = false
+var bool f_premh = false, var bool f_preml = false
+var bool f_ash  = false, var bool f_asl  = false
+var bool f_loh  = false, var bool f_lol  = false
+var bool f_nyah = false, var bool f_nyal = false
+var bool f_nyph = false, var bool f_nypl = false
+
+// Reset daily (all intraday levels)
+if new_day_et
+    f_pdh   := false, f_pdl   := false
+    f_premh := false, f_preml := false
+    f_ash   := false, f_asl   := false
+    f_loh   := false, f_lol   := false
+    f_nyah  := false, f_nyal  := false
+    f_nyph  := false, f_nypl  := false
+
+// Reset weekly
+new_week = weekofyear != weekofyear[1]
+if new_week
+    f_pwh := false, f_pwl := false
+
+// Reset monthly
+new_month = month != month[1]
+if new_month
+    f_pmh := false, f_pml := false
+
+// ─── ALERT MESSAGE BUILDER ───────────────────────────────────────────────────
+// TradingView sends the alert() message string as the POST body to webhook URL.
+// Bot reads: { secret, level, direction, price, ticker }
+build_msg(lvl, dir) =>
+    "{\"secret\":\"" + secret + "\",\"level\":\"" + lvl + "\",\"direction\":\"" + dir + "\",\"price\":" + str.tostring(close, "#.##") + ",\"ticker\":\"" + ticker_sym + "\"}"
+
+// ─── SWEEP DETECTION + FIRE ──────────────────────────────────────────────────
+
+// PDH/PDL
+if not f_pdh and not na(pdh) and high > pdh
+    f_pdh := true
+    alert(build_msg("PDH", "above"), alert.freq_once_per_bar)
+
+if not f_pdl and not na(pdl) and low < pdl
+    f_pdl := true
+    alert(build_msg("PDL", "below"), alert.freq_once_per_bar)
+
+// PWH/PWL
+if not f_pwh and not na(pwh) and high > pwh
+    f_pwh := true
+    alert(build_msg("PWH", "above"), alert.freq_once_per_bar)
+
+if not f_pwl and not na(pwl) and low < pwl
+    f_pwl := true
+    alert(build_msg("PWL", "below"), alert.freq_once_per_bar)
+
+// PMH/PML
+if not f_pmh and not na(pmh) and high > pmh
+    f_pmh := true
+    alert(build_msg("PMH", "above"), alert.freq_once_per_bar)
+
+if not f_pml and not na(pml) and low < pml
+    f_pml := true
+    alert(build_msg("PML", "below"), alert.freq_once_per_bar)
+
+// PreMH/PreML — only fire AFTER pre-market closes (9:30+)
+if not f_premh and not na(premh) and not in_pre() and high > premh
+    f_premh := true
+    alert(build_msg("PreMH", "above"), alert.freq_once_per_bar)
+
+if not f_preml and not na(preml) and not in_pre() and low < preml
+    f_preml := true
+    alert(build_msg("PreML", "below"), alert.freq_once_per_bar)
+
+// ASH/ASL — only fire after Asia closes
+if not f_ash and not na(ash) and not in_asia() and high > ash
+    f_ash := true
+    alert(build_msg("ASH", "above"), alert.freq_once_per_bar)
+
+if not f_asl and not na(asl) and not in_asia() and low < asl
+    f_asl := true
+    alert(build_msg("ASL", "below"), alert.freq_once_per_bar)
+
+// LOH/LOL — only fire during NY AM or NY PM
+if not f_loh and not na(loh) and (in_nyam() or in_nypm()) and high > loh
+    f_loh := true
+    alert(build_msg("LOH", "above"), alert.freq_once_per_bar)
+
+if not f_lol and not na(lol) and (in_nyam() or in_nypm()) and low < lol
+    f_lol := true
+    alert(build_msg("LOL", "below"), alert.freq_once_per_bar)
+
+// NYAH/NYAL — only fire during NY PM
+if not f_nyah and not na(nyah) and in_nypm() and high > nyah
+    f_nyah := true
+    alert(build_msg("NYAH", "above"), alert.freq_once_per_bar)
+
+if not f_nyal and not na(nyal) and in_nypm() and low < nyal
+    f_nyal := true
+    alert(build_msg("NYAL", "below"), alert.freq_once_per_bar)
+
+// NYPH/NYPL — fire during next Asia session (carries over)
+if not f_nyph and not na(nyph) and in_asia() and high > nyph
+    f_nyph := true
+    alert(build_msg("NYPH", "above"), alert.freq_once_per_bar)
+
+if not f_nypl and not na(nypl) and in_asia() and low < nypl
+    f_nypl := true
+    alert(build_msg("NYPL", "below"), alert.freq_once_per_bar)
+
+// ─── VISUAL LINES ────────────────────────────────────────────────────────────
+c_day  = color.new(color.yellow, 20)
+c_week = color.new(color.orange, 20)
+c_mo   = color.new(color.red,    20)
+c_sess = color.new(#00e5ff,      30)
+c_pre  = color.new(color.purple, 30)
+
+plot(show_lines ? pdh  : na, "PDH",   c_day,  1, plot.style_circles)
+plot(show_lines ? pdl  : na, "PDL",   c_day,  1, plot.style_circles)
+plot(show_lines ? pwh  : na, "PWH",   c_week, 1, plot.style_circles)
+plot(show_lines ? pwl  : na, "PWL",   c_week, 1, plot.style_circles)
+plot(show_lines ? pmh  : na, "PMH",   c_mo,   1, plot.style_circles)
+plot(show_lines ? pml  : na, "PML",   c_mo,   1, plot.style_circles)
+plot(show_lines ? premh : na, "PreMH", c_pre,  1, plot.style_circles)
+plot(show_lines ? preml : na, "PreML", c_pre,  1, plot.style_circles)
+plot(show_lines ? ash  : na, "ASH",   c_sess, 1, plot.style_circles)
+plot(show_lines ? asl  : na, "ASL",   c_sess, 1, plot.style_circles)
+plot(show_lines ? loh  : na, "LOH",   c_sess, 1, plot.style_circles)
+plot(show_lines ? lol  : na, "LOL",   c_sess, 1, plot.style_circles)
+plot(show_lines ? nyah : na, "NYAH",  c_sess, 1, plot.style_circles)
+plot(show_lines ? nyal : na, "NYAL",  c_sess, 1, plot.style_circles)
+plot(show_lines ? nyph : na, "NYPH",  c_sess, 1, plot.style_circles)
+plot(show_lines ? nypl : na, "NYPL",  c_sess, 1, plot.style_circles)
