@@ -2742,6 +2742,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferReply({ ephemeral: true });
 
+        // Force a fresh YF fetch and show result immediately
+        try {
+          await _refreshNQLevels();
+        } catch (e) {
+          return interaction.editReply({ content: `❌ YF fetch failed: \`${e.message}\`` });
+        }
+
         const fmt = v => v != null && !isNaN(v) ? `\`${parseFloat(v).toFixed(2)}\`` : '`—`';
         const p = _pineLevels;
 
