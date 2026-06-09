@@ -1573,7 +1573,7 @@ async function _spinGiveaway(interaction, messageId) {
   const gw = _giveaways.get(messageId);
   if (!gw) return interaction.reply({ content: 'Giveaway not found.', ephemeral: true });
 
-  const entrantIds = [...gw.entrants];
+  let entrantIds = [...gw.entrants];
   if (entrantIds.length === 0) return interaction.reply({ content: 'No one entered!', ephemeral: true });
 
   await interaction.deferUpdate();
@@ -1594,43 +1594,49 @@ async function _spinGiveaway(interaction, messageId) {
   await msg.edit({ embeds: [spinningEmbed], components: [disabledRow] });
 
   // Resolve display names
-  const names = await Promise.all(entrantIds.map(async id => {
+  let names = await Promise.all(entrantIds.map(async id => {
     try {
       const member = await interaction.guild.members.fetch(id);
       return member.displayName;
-    } catch { return `User`; }
+    } catch { return 'User'; }
   }));
 
-  // Pick winner
+  // Pick winner before padding
   const winnerIndex = Math.floor(Math.random() * names.length);
   const winnerId = entrantIds[winnerIndex];
 
-  // Generate GIF
-  const gifBuf = await _buildWheelGif(names, winnerIndex);
+  // Pad to min 3 visual segments so wheel looks good with few entrants
+  const displayNames = [...names];
+  while (displayNames.length < 3) displayNames.push('...');
+
+  // Generate GIF with padded names
+  const gifBuf = await _buildWheelGif(displayNames, winnerIndex);
   const attachment = new AttachmentBuilder(gifBuf, { name: 'wheel.gif' });
 
-  // Send GIF as new message
-  await ch.send({
-    content: `🎰 **${gw.title}** — The wheel is spinning!`,
-    files: [attachment],
-  });
-
-  // Wait for GIF spin duration (~55 frames × 40ms ≈ 2.5s) + buffer
-  await new Promise(r => setTimeout(r, 4000));
-
-  // Fetch winner avatar
+  // Fetch winner info + build card in parallel with GIF send
   const winnerMember = await interaction.guild.members.fetch(winnerId).catch(() => null);
   const winnerName = winnerMember?.displayName || 'Winner';
   const avatarURL = winnerMember?.user?.displayAvatarURL({ extension: 'png', size: 256 }) || null;
 
-  const cardBuf = await _buildWinnerCard(winnerName, avatarURL, gw.prize, gw.title, entrantIds.length);
-  const cardAttachment = new AttachmentBuilder(cardBuf, { name: 'winner.png' });
+  // Send GIF + build card simultaneously
+  const [, cardBuf] = await Promise.all([
+    ch.send({ content: `🎰 **${gw.title}** — The wheel is spinning!`, files: [attachment] }),
+    _buildWinnerCard(winnerName, avatarURL, gw.prize, gw.title, entrantIds.length).catch(e => {
+      console.error('Winner card build failed:', e.message); return null;
+    }),
+  ]);
+
+  // Wait for GIF to finish playing (70 frames × 40ms = 2.8s)
+  await new Promise(r => setTimeout(r, 3000));
 
   await msg.edit({ embeds: [], components: [] });
-  await ch.send({
-    content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁`,
-    files: [cardAttachment],
-  });
+
+  if (cardBuf) {
+    const cardAttachment = new AttachmentBuilder(cardBuf, { name: 'winner.png' });
+    await ch.send({ content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁`, files: [cardAttachment] });
+  } else {
+    await ch.send({ content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁` });
+  }
 
   _giveaways.delete(messageId);
 }
@@ -1711,7 +1717,10 @@ async function _buildWinnerCard(winnerName, avatarURL, prize, title, totalEntran
   ctx.fillStyle=avBg; ctx.fillRect(avatarX-avatarR,avatarY-avatarR,avatarR*2,avatarR*2);
   if (avatarURL) {
     try {
-      const img = await loadImage(avatarURL);
+      const img = await Promise.race([
+        loadImage(avatarURL),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('avatar timeout')), 5000)),
+      ]);
       ctx.drawImage(img, avatarX-avatarR, avatarY-avatarR, avatarR*2, avatarR*2);
     } catch { _drawAvatarInitial(ctx, winnerName, avatarX, avatarY); }
   } else { _drawAvatarInitial(ctx, winnerName, avatarX, avatarY); }
