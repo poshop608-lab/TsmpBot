@@ -193,6 +193,31 @@ if not f_nypl and not na(nypl) and in_asia() and low < nypl
     f_nypl := true
     alert(build_msg("NYPL", "below"), alert.freq_once_per_bar)
 
+// ─── HEARTBEAT — fires every bar to /levels so bot always has current values ──
+// Friend needs a SECOND alert: condition = "TSMP Sweep Alerts: Heartbeat"
+// Webhook URL: https://tsmpbot-production.up.railway.app/levels
+heartbeat_msg() =>
+    "{\"secret\":\"" + secret + "\"" +
+    ",\"pdh\":"   + (na(pdh)   ? "null" : str.tostring(pdh,   "#.##")) +
+    ",\"pdl\":"   + (na(pdl)   ? "null" : str.tostring(pdl,   "#.##")) +
+    ",\"pwh\":"   + (na(pwh)   ? "null" : str.tostring(pwh,   "#.##")) +
+    ",\"pwl\":"   + (na(pwl)   ? "null" : str.tostring(pwl,   "#.##")) +
+    ",\"pmh\":"   + (na(pmh)   ? "null" : str.tostring(pmh,   "#.##")) +
+    ",\"pml\":"   + (na(pml)   ? "null" : str.tostring(pml,   "#.##")) +
+    ",\"premh\":" + (na(premh) ? "null" : str.tostring(premh, "#.##")) +
+    ",\"preml\":" + (na(preml) ? "null" : str.tostring(preml, "#.##")) +
+    ",\"ash\":"   + (na(ash)   ? "null" : str.tostring(ash,   "#.##")) +
+    ",\"asl\":"   + (na(asl)   ? "null" : str.tostring(asl,   "#.##")) +
+    ",\"loh\":"   + (na(loh)   ? "null" : str.tostring(loh,   "#.##")) +
+    ",\"lol\":"   + (na(lol)   ? "null" : str.tostring(lol,   "#.##")) +
+    ",\"nyah\":"  + (na(nyah)  ? "null" : str.tostring(nyah,  "#.##")) +
+    ",\"nyal\":"  + (na(nyal)  ? "null" : str.tostring(nyal,  "#.##")) +
+    ",\"nyph\":"  + (na(nyph)  ? "null" : str.tostring(nyph,  "#.##")) +
+    ",\"nypl\":"  + (na(nypl)  ? "null" : str.tostring(nypl,  "#.##")) +
+    "}"
+
+alert(heartbeat_msg(), alert.freq_all)
+
 // ─── VISUAL LINES ────────────────────────────────────────────────────────────
 c_day  = color.new(color.yellow, 20)
 c_week = color.new(color.orange, 20)

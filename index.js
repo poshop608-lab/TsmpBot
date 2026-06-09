@@ -1426,6 +1426,9 @@ async function _tickVcCountdown() {
 // Session H/L — keys: asia, london, nyam, nypm
 let _tcSessions = {};
 
+// Universal levels from Pine heartbeat
+let _pineLevels = {};  // { pdh, pdl, pwh, pwl, pmh, pml, premh, preml, ash, asl, loh, lol, nyah, nyal, nyph, nypl }
+
 // One-shot fired flags
 let _swept = {};
 let _lastSweepDay = null;
@@ -2515,11 +2518,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        const fmt = v => v != null ? `\`${v.toFixed(2)}\`` : '`—`';
-        const asia   = _tcSessions.asia   || {};
-        const london = _tcSessions.london || {};
-        const nyam   = _tcSessions.nyam   || {};
-        const nypm   = _tcSessions.nypm   || {};
+        const fmt = v => v != null && !isNaN(v) ? `\`${parseFloat(v).toFixed(2)}\`` : '`—`';
+        const p = _pineLevels;
 
         const nyTime = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: true });
         const hm = _nyHM();
@@ -2531,18 +2531,16 @@ client.on(Events.InteractionCreate, async interaction => {
           `**Current Session** — ${curSessLabel}  ·  ${nyTime} ET`,
           ``,
           `**━━ Universal Levels ━━**`,
-          `\`PDH\` Previous Day High — *(from Pine webhook)*`,
-          `\`PDL\` Previous Day Low  — *(from Pine webhook)*`,
-          `\`PWH\` Previous Week High — *(from Pine webhook)*`,
-          `\`PWL\` Previous Week Low  — *(from Pine webhook)*`,
-          `\`PMH\` Previous Month High — *(from Pine webhook)*`,
-          `\`PML\` Previous Month Low  — *(from Pine webhook)*`,
+          `\`PDH\` ${fmt(p.pdh)}   \`PDL\` ${fmt(p.pdl)}`,
+          `\`PWH\` ${fmt(p.pwh)}   \`PWL\` ${fmt(p.pwl)}`,
+          `\`PMH\` ${fmt(p.pmh)}   \`PML\` ${fmt(p.pml)}`,
+          `\`PreMH\` ${fmt(p.premh)}   \`PreML\` ${fmt(p.preml)}`,
           ``,
-          `**━━ Session Levels (built from incoming sweeps) ━━**`,
-          `\`ASH\` Asia High — ${fmt(asia.h)}   \`ASL\` Asia Low — ${fmt(asia.l)}`,
-          `\`LOH\` London High — ${fmt(london.h)}   \`LOL\` London Low — ${fmt(london.l)}`,
-          `\`NYAH\` NY AM High — ${fmt(nyam.h)}   \`NYAL\` NY AM Low — ${fmt(nyam.l)}`,
-          `\`NYPH\` NY PM High — ${fmt(nypm.h)}   \`NYPL\` NY PM Low — ${fmt(nypm.l)}`,
+          `**━━ Session Levels ━━**`,
+          `\`ASH\` ${fmt(p.ash)}   \`ASL\` ${fmt(p.asl)}`,
+          `\`LOH\` ${fmt(p.loh)}   \`LOL\` ${fmt(p.lol)}`,
+          `\`NYAH\` ${fmt(p.nyah)}   \`NYAL\` ${fmt(p.nyal)}`,
+          `\`NYPH\` ${fmt(p.nyph)}   \`NYPL\` ${fmt(p.nypl)}`,
           ``,
           `**━━ Fired Today ━━**`,
           Object.keys(_swept).length ? Object.keys(_swept).map(k => `\`${k}\``).join('  ') : '*none yet*',
@@ -3397,6 +3395,13 @@ client.once(Events.ClientReady, () => {
 // ── Express webhook server for TradingView sweep alerts ──
 const app = express();
 app.use(express.json());
+
+app.post('/levels', (req, res) => {
+  const { secret, ...levels } = req.body;
+  if (secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
+  _pineLevels = levels;  // store all level values from Pine
+  res.json({ ok: true });
+});
 
 app.post('/sweep', async (req, res) => {
   try {
