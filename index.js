@@ -2051,7 +2051,7 @@ async function _pollNQSweeps() {
         .setTitle(title)
         .setDescription(descLines.join('\n'))
         .setTimestamp()
-        .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert (YF ~10min delay)' });
+        .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert  ·  ⚠️ ~10 min delay' });
 
       await ch.send({ content: rolePings.join(' ') || undefined, embeds: [embed] });
     }
@@ -2149,8 +2149,8 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
           '`PMH / PML` — Previous Month High / Low\n' +
           '`PreMH / PreML` — Pre-Market High / Low *(built 07:00–09:30 ET)*\n\n' +
           '**Session Levels** — each fires once then locks, resets midnight ET\n' +
-          '`ASH / ASL` — Asia High / Low *(18:00–02:30)* → alerted during London\n' +
-          '`LOH / LOL` — London High / Low *(02:30–07:00)* → alerted during NY AM\n' +
+          '`ASH / ASL` — Asia High / Low *(18:00–00:00)* → alerted during London\n' +
+          '`LOH / LOL` — London High / Low *(00:00–07:00)* → alerted during NY AM\n' +
           '`NYAH / NYAL` — NY Morning High / Low *(07:00–11:30)* → alerted during NY PM\n' +
           '`NYPH / NYPL` — NY Afternoon High / Low *(11:30–16:00)* → alerted during Asia',
         inline: false,
@@ -3763,7 +3763,7 @@ app.post('/sweep', async (req, res) => {
     if (priceVal) _tickSessionHL(isAbove ? priceVal : 0, isAbove ? 999999 : priceVal);
 
     const hm = _nyHM();
-    const SESSION_LABELS = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
+    const SESSION_LABELS = { asia: 'Asia (18:00–00:00)', london: 'London (00:00–07:00)', nyam: 'NY Morning (07:00–11:30)', nypm: 'NY Afternoon (11:30–16:00)' };
     const curSess = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
     const sessLabel = SESSION_LABELS[curSess] || '—';
 
@@ -3792,7 +3792,7 @@ app.post('/sweep', async (req, res) => {
       .setTitle(title)
       .setDescription(desc)
       .setTimestamp()
-      .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert' });
+      .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert  ·  ⚠️ ~10 min delay' });
 
     await ch.send({ content: rolePings.join(' ') || undefined, embeds: [embed] });
     console.log(`Webhook sweep: ${levelKey} ${direction} @ ${priceStr}`);
