@@ -1947,22 +1947,20 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
         name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈  TIME CYCLE ALERTS',
         value:
           `Alerts fire in ${sweepMention} · ⚠️ ~10 min data delay\n\n` +
-          '**Universal Levels** *(always active)*\n' +
-          '`PDH / PDL` · `PWH / PWL` · `PMH / PML` · `PreMH / PreML`\n\n' +
-          '**Session Levels** *(once-only sweep alert)*\n' +
-          '`ASH/ASL` → alerted in London · `LOH/LOL` → alerted in NY AM\n' +
-          '`NYAH/NYAL` → alerted in NY PM · `NYPH/NYPL` → alerted in Asia\n' +
-          '`PreMH/PreML` built 07:00–09:30 ET · all levels lock after first sweep',
-        inline: false,
-      },
-      {
-        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📐  QT THEORY ALERTS',
-        value:
-          `Alerts fire in ${sweepMention} · ⚠️ ~10 min data delay\n\n` +
-          '**Universal Levels** *(same as above)*\n' +
-          '`PDH / PDL` · `PWH / PWL` · `PMH / PML` · `PreMH / PreML`\n\n' +
-          '**True Opens** `TAO` 19:30 · `TLO` 01:30 · `TNY` 07:30 · `TPM` 13:30 ET\n\n' +
-          '**90-Min Q Blocks** — previous Q H/L swept in current Q',
+          '**Universal Levels** — always active, lock once swept\n' +
+          '`PDH / PDL` — Previous Day High / Low\n' +
+          '`PWH / PWL` — Previous Week High / Low\n' +
+          '`PMH / PML` — Previous Month High / Low\n' +
+          '`PreMH / PreML` — Pre-Market High / Low *(built 07:00–09:30 ET)*\n\n' +
+          '**Session Levels** — each fires once then locks, resets midnight ET\n' +
+          '`ASH / ASL` — Asia High / Low *(18:00–02:30)* → alerted during London\n' +
+          '`LOH / LOL` — London High / Low *(02:30–07:00)* → alerted during NY AM\n' +
+          '`NYAH / NYAL` — NY Morning High / Low *(07:00–11:30)* → alerted during NY PM\n' +
+          '`NYPH / NYPL` — NY Afternoon High / Low *(11:30–16:00)* → alerted during Asia\n\n' +
+          '**AMD 90-Min Blocks** — each block\'s H/L alerted in the next block, once only\n' +
+          'London `A 02:30` → `M 04:00` → `D 05:30` → alerts into NY AM\n' +
+          'NY AM `A 07:00` → `M 08:30` → `D 10:00` → alerts into NY PM\n' +
+          'NY PM `A 11:30` → `M 13:00` → `D 14:30` → alerts into Asia',
         inline: false,
       },
       {
@@ -1981,8 +1979,7 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
     .setFooter({ text: 'The Smart Money Paradigm  ·  Toggle roles below' });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('sweep_tc_toggle').setLabel('📈  Time Cycle').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('sweep_qt_toggle').setLabel('📐  QT Theory').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('sweep_tc_toggle').setLabel('📈  Time Cycle Alerts').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('vc_alert_toggle').setLabel('📅  VC Alerts').setStyle(ButtonStyle.Success),
   );
 
