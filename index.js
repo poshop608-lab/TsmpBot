@@ -2760,19 +2760,20 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.deferReply({ ephemeral: true });
 
         // Force a fresh YF fetch — bypass internal catch to surface errors
-        let yfDebug = '';
+        // Direct fetch — fully transparent, shows raw result always
+        let yfStatus = '⏳ fetching...';
         try {
           const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(NQ_SYMBOL)}?interval=1d&range=5d`;
-          const url = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
-          const json = await httpsGet(url);
-          if (json.error) throw new Error('proxy: ' + json.error);
+          const proxyUrl = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
+          const json = await httpsGet(proxyUrl);
+          if (json.error) throw new Error('proxy error: ' + JSON.stringify(json.error));
           const result = json?.chart?.result?.[0];
-          if (!result) throw new Error('no result: ' + JSON.stringify(json).slice(0, 200));
-          const dhRaw = result.indicators.quote[0].high;
-          const dlRaw = result.indicators.quote[0].low;
+          if (!result) throw new Error('no result — raw: ' + JSON.stringify(json).slice(0, 300));
+          const dhRaw = result.indicators?.quote?.[0]?.high;
+          const dlRaw = result.indicators?.quote?.[0]?.low;
+          if (!dhRaw) throw new Error('no quote data in result');
           const dhClean = dhRaw.filter(v => v != null);
           const dlClean = dlRaw.filter(v => v != null);
-          yfDebug = `raw highs: ${JSON.stringify(dhRaw)}\nclean: ${JSON.stringify(dhClean)} (len=${dhClean.length})`;
           if (dhClean.length >= 2) {
             _nqLevels.pdh = dhClean[dhClean.length - 2];
             _nqLevels.pdl = dlClean[dlClean.length - 2];
@@ -2780,14 +2781,32 @@ client.on(Events.InteractionCreate, async interaction => {
             _nqLevels.pdh = dhClean[0];
             _nqLevels.pdl = dlClean[0];
           }
-          // Also refresh weekly + monthly
-          await _refreshNQLevels();
+          yfStatus = `✅ daily ok — highs: ${JSON.stringify(dhClean)}`;
+          // Weekly
+          const weekly = await _fetchNQCandles('3mo', '1wk');
+          const whClean = weekly.indicators.quote[0].high.filter(v => v != null);
+          const wlClean = weekly.indicators.quote[0].low.filter(v => v != null);
+          if (whClean.length >= 2) { _nqLevels.pwh = whClean[whClean.length - 2]; _nqLevels.pwl = wlClean[wlClean.length - 2]; }
+          // Monthly
+          const monthly = await _fetchNQCandles('2y', '1mo');
+          const mhClean = monthly.indicators.quote[0].high.filter(v => v != null);
+          const mlClean = monthly.indicators.quote[0].low.filter(v => v != null);
+          if (mhClean.length >= 2) { _nqLevels.pmh = mhClean[mhClean.length - 2]; _nqLevels.pml = mlClean[mlClean.length - 2]; }
+          yfStatus += ` | pwh=${_nqLevels.pwh} pmh=${_nqLevels.pmh}`;
         } catch (e) {
-          return interaction.editReply({ content: `❌ YF fetch failed: \`${e.message}\`\n\`\`\`${yfDebug}\`\`\`` });
+          yfStatus = `❌ ${e.message}`;
         }
+        // Always show debug line so we can see what happened
+        console.log('[test-sweep YF]', yfStatus, '| nqLevels:', JSON.stringify(_nqLevels));
 
         const fmt = v => v != null && !isNaN(v) ? `\`${parseFloat(v).toFixed(2)}\`` : '`—`';
-        const p = _pineLevels;
+        // Pine heartbeat takes priority, fall back to YF
+        const fv = key => _pineLevels[key] ?? _nqLevels[key] ?? null;
+        // Session levels from _tcSessions
+        const asia   = _tcSessions.asia   || {};
+        const london = _tcSessions.london || {};
+        const nyam   = _tcSessions.nyam   || {};
+        const nypm   = _tcSessions.nypm   || {};
 
         const nyTime = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: true });
         const hm = _nyHM();
@@ -2797,18 +2816,19 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const lines = [
           `**Current Session** — ${curSessLabel}  ·  ${nyTime} ET`,
+          `📡 YF: \`${yfStatus.slice(0, 80)}\``,
           ``,
           `**━━ Universal Levels ━━**`,
-          `\`PDH\` ${fmt(p.pdh)}   \`PDL\` ${fmt(p.pdl)}`,
-          `\`PWH\` ${fmt(p.pwh)}   \`PWL\` ${fmt(p.pwl)}`,
-          `\`PMH\` ${fmt(p.pmh)}   \`PML\` ${fmt(p.pml)}`,
-          `\`PreMH\` ${fmt(p.premh)}   \`PreML\` ${fmt(p.preml)}`,
+          `\`PDH\` ${fmt(fv('pdh'))}   \`PDL\` ${fmt(fv('pdl'))}`,
+          `\`PWH\` ${fmt(fv('pwh'))}   \`PWL\` ${fmt(fv('pwl'))}`,
+          `\`PMH\` ${fmt(fv('pmh'))}   \`PML\` ${fmt(fv('pml'))}`,
+          `\`PreMH\` ${fmt(fv('premh'))}   \`PreML\` ${fmt(fv('preml'))}`,
           ``,
           `**━━ Session Levels ━━**`,
-          `\`ASH\` ${fmt(p.ash)}   \`ASL\` ${fmt(p.asl)}`,
-          `\`LOH\` ${fmt(p.loh)}   \`LOL\` ${fmt(p.lol)}`,
-          `\`NYAH\` ${fmt(p.nyah)}   \`NYAL\` ${fmt(p.nyal)}`,
-          `\`NYPH\` ${fmt(p.nyph)}   \`NYPL\` ${fmt(p.nypl)}`,
+          `\`ASH\` ${fmt(_pineLevels.ash ?? asia.h)}   \`ASL\` ${fmt(_pineLevels.asl ?? asia.l)}`,
+          `\`LOH\` ${fmt(_pineLevels.loh ?? london.h)}   \`LOL\` ${fmt(_pineLevels.lol ?? london.l)}`,
+          `\`NYAH\` ${fmt(_pineLevels.nyah ?? nyam.h)}   \`NYAL\` ${fmt(_pineLevels.nyal ?? nyam.l)}`,
+          `\`NYPH\` ${fmt(_pineLevels.nyph ?? nypm.h)}   \`NYPL\` ${fmt(_pineLevels.nypl ?? nypm.l)}`,
           ``,
           `**━━ Fired Today ━━**`,
           Object.keys(_swept).length ? Object.keys(_swept).map(k => `\`${k}\``).join('  ') : '*none yet*',
