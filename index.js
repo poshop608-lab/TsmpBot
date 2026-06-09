@@ -1420,30 +1420,15 @@ async function _tickVcCountdown() {
   }
 }
 
-// ── NQ Price Monitor ──
-// Yahoo Finance: ~30s lag during market hours, ~10min outside
-const SWEEP_POLL_MS = 30 * 1000;
-const NQ_SYMBOL = 'NQ=F';
-
-// Tracked static levels — refreshed daily/weekly/monthly
-let _nqLevels = {
-  pdh: null, pdl: null,   // Previous Day H/L
-  pwh: null, pwl: null,   // Previous Week H/L
-  pmh: null, pml: null,   // Previous Month H/L
-  premh: null, preml: null, // Pre-Market H/L (07:00-09:30 ET)
-};
-
-// AMD 90-min block H/L — keys: lon_a/m/d, nam_a/m/d, npm_a/m/d
-let _qtBlocks = {};
+// ── NQ Sweep Monitor ──
+// Levels pushed via TV webhook — no YF polling
 
 // Session H/L — keys: asia, london, nyam, nypm
 let _tcSessions = {};
 
 // One-shot fired flags
 let _swept = {};
-let _lastSweepDay  = null;
-let _lastSweepWeek = null;
-let _lastSweepMonth = null;
+let _lastSweepDay = null;
 
 // ── Giveaway ──
 const _giveaways = new Map();
@@ -1821,12 +1806,9 @@ const SWEEP_STATE_FILE = path.join(__dirname, 'data', 'sweep_state.json');
 function _sweepStateSave() {
   try {
     fs.writeFileSync(SWEEP_STATE_FILE, JSON.stringify({
-      _qtBlocks,
       _tcSessions,
       _swept,
       _lastSweepDay,
-      _lastSweepWeek,
-      _lastSweepMonth,
     }));
   } catch (e) { console.warn('sweep state save failed:', e.message); }
 }
@@ -1841,12 +1823,9 @@ function _sweepStateLoad() {
       console.log('Sweep state stale (different day) — starting fresh');
       return;
     }
-    if (s._qtBlocks)       _qtBlocks       = s._qtBlocks;
-    if (s._tcSessions)     _tcSessions     = s._tcSessions;
-    if (s._swept)          _swept          = s._swept;
-    if (s._lastSweepDay)   _lastSweepDay   = s._lastSweepDay;
-    if (s._lastSweepWeek)  _lastSweepWeek  = s._lastSweepWeek;
-    if (s._lastSweepMonth) _lastSweepMonth = s._lastSweepMonth;
+    if (s._tcSessions)   _tcSessions   = s._tcSessions;
+    if (s._swept)        _swept        = s._swept;
+    if (s._lastSweepDay) _lastSweepDay = s._lastSweepDay;
     console.log('Sweep state restored for', nyToday);
   } catch (_) { /* no file yet, fine */ }
 }
@@ -1863,69 +1842,6 @@ function _nyHM() {
 // Restore sweep state from file on startup
 _sweepStateLoad();
 
-// ── Yahoo Finance cookie+crumb auth ──
-
-const YF_PROXY_URL = 'https://yf-proxy.poshop608.workers.dev';
-
-async function _yfRefreshAuth() {
-  // no-op — proxy handles auth internally
-}
-
-async function _fetchNQCandles(range, interval) {
-  const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(NQ_SYMBOL)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`;
-  const url = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
-
-  let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-      const json = await res.json();
-      if (json.error) throw new Error('proxy error: ' + json.error);
-      const result = json?.chart?.result?.[0];
-      if (!result) throw new Error('no chart result: ' + JSON.stringify(json).slice(0, 120));
-      return result;
-    } catch (e) {
-      lastErr = e;
-      if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
-    }
-  }
-  throw lastErr;
-}
-
-async function _refreshNQLevels() {
-  try {
-    // PDH/PDL — 5d daily, second-to-last complete candle
-    const daily = await _fetchNQCandles('5d', '1d');
-    const dhRaw = daily.indicators.quote[0].high;
-    const dlRaw = daily.indicators.quote[0].low;
-    const dhClean = dhRaw.filter(v => v != null);
-    const dlClean = dlRaw.filter(v => v != null);
-    if (dhClean.length >= 2) { _nqLevels.pdh = dhClean[dhClean.length - 2]; _nqLevels.pdl = dlClean[dlClean.length - 2]; }
-
-    // PWH/PWL — 3mo weekly, second-to-last complete candle
-    const weekly = await _fetchNQCandles('3mo', '1wk');
-    const whRaw = weekly.indicators.quote[0].high;
-    const wlRaw = weekly.indicators.quote[0].low;
-    const whClean = whRaw.filter(v => v != null);
-    const wlClean = wlRaw.filter(v => v != null);
-    if (whClean.length >= 2) { _nqLevels.pwh = whClean[whClean.length - 2]; _nqLevels.pwl = wlClean[wlClean.length - 2]; }
-    // PMH/PML — 2y monthly, second-to-last complete candle (skip nulls)
-    const monthly = await _fetchNQCandles('2y', '1mo');
-    const mhRaw = monthly.indicators.quote[0].high;
-    const mlRaw = monthly.indicators.quote[0].low;
-    // Filter out null/undefined (incomplete current candle may be null)
-    const mhClean = mhRaw.filter(v => v != null);
-    const mlClean = mlRaw.filter(v => v != null);
-    if (mhClean.length >= 2) {
-      _nqLevels.pmh = mhClean[mhClean.length - 2];
-      _nqLevels.pml = mlClean[mlClean.length - 2];
-    } else if (mhClean.length === 1) {
-      _nqLevels.pmh = mhClean[0];
-      _nqLevels.pml = mlClean[0];
-    }
-    console.log('NQ levels refreshed:', JSON.stringify(_nqLevels));
-  } catch (e) { console.warn('NQ level refresh failed:', e.message); }
-}
 
 async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId) {
   // Delete existing bot messages in alert-roles to avoid duplicates
@@ -1986,213 +1902,41 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
   await rolesAlertCh.send({ embeds: [embed], components: [row] });
 }
 
-async function _pollNQSweeps() {
-  if (!SWEEP_ALERT_CH_ID) return;
-  if (!SWEEP_TC_ROLE_ID && !SWEEP_QT_ROLE_ID) return;
+// Session H/L tracking — called every minute to build session ranges
+// Levels are pushed via TV webhook; this only tracks H/L for ASH/ASL etc
+function _tickSessionHL(high, low) {
+  const hm = _nyHM();
+  const ny = _nyTime();
+  const today = ny.toDateString();
 
-  // Retry level fetch if still null (e.g. startup fetch failed)
-  if (!_nqLevels.pdh || !_nqLevels.pdl) {
-    await _refreshNQLevels().catch(e => console.warn('level retry failed:', e?.message));
+  // Daily reset at midnight ET
+  if (_lastSweepDay !== today) {
+    _lastSweepDay = today;
+    Object.keys(_swept).filter(k =>
+      ['pdh','pdl','pwh','pwl','pmh','pml','prem','sess_'].some(p => k.startsWith(p))
+    ).forEach(k => delete _swept[k]);
+    _tcSessions = {};
+    _sweepStateSave();
   }
 
-  try {
-    const result = await _fetchNQCandles('1d', '1m');
-    const quotes = result.indicators.quote[0];
-    const timestamps = result.timestamp;
-    if (!timestamps || !timestamps.length) return;
+  const SESS_DEF = [
+    { key: 'asia',   start: 1080, end: 150  },
+    { key: 'london', start: 150,  end: 420  },
+    { key: 'nyam',   start: 420,  end: 690  },
+    { key: 'nypm',   start: 690,  end: 960  },
+  ];
 
-    const lastIdx = timestamps.length - 1;
-    const high  = quotes.high[lastIdx];
-    const low   = quotes.low[lastIdx];
-    const price = quotes.close[lastIdx] || high;
-    if (!high || !low) return;
-
-    const ny    = _nyTime();
-    const hm    = _nyHM();
-    const today = ny.toDateString();
-    const weekN = `${ny.getFullYear()}-W${ny.getDay() === 0 ? Math.ceil(ny.getDate()/7)-1 : Math.ceil(ny.getDate()/7)}`;
-    const monthN = `${ny.getFullYear()}-${ny.getMonth()}`;
-
-    // ── Daily reset (midnight ET) ──
-    if (_lastSweepDay !== today) {
-      _lastSweepDay = today;
-      Object.keys(_swept).filter(k =>
-        ['pdh','pdl','prem','sess_','amd_'].some(p => k.startsWith(p))
-      ).forEach(k => delete _swept[k]);
-      _qtBlocks = {};
-      _tcSessions = {};
-      _nqLevels.premh = null;
-      _nqLevels.preml = null;
-      await _refreshNQLevels();
-      _sweepStateSave();
+  for (const sess of SESS_DEF) {
+    const inSess = sess.start > sess.end
+      ? (hm >= sess.start || hm < sess.end)
+      : (hm >= sess.start && hm < sess.end);
+    if (inSess) {
+      if (!_tcSessions[sess.key]) _tcSessions[sess.key] = { h: null, l: null };
+      const sd = _tcSessions[sess.key];
+      sd.h = sd.h === null ? high : Math.max(sd.h, high);
+      sd.l = sd.l === null ? low  : Math.min(sd.l, low);
     }
-
-    // ── Weekly reset ──
-    if (_lastSweepWeek !== weekN) {
-      _lastSweepWeek = weekN;
-      ['pwh','pwl'].forEach(k => delete _swept[k]);
-      await _refreshNQLevels(); // fetch new PWH/PWL
-    }
-
-    // ── Monthly reset ──
-    if (_lastSweepMonth !== monthN) {
-      _lastSweepMonth = monthN;
-      ['pmh','pml'].forEach(k => delete _swept[k]);
-      await _refreshNQLevels(); // fetch new PMH/PML
-    }
-
-    const guild = client.guilds.cache.first();
-    if (!guild) return;
-    const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
-    if (!ch) return;
-
-    // Collect all sweeps this candle, send as one combined message
-    const pendingAlerts = []; // { key, label, direction, lvlPrice }
-
-    function collectAlert(key, label, direction, lvlPrice) {
-      if (_swept[key]) return;
-      _swept[key] = true;
-      pendingAlerts.push({ key, label, direction, lvlPrice });
-      console.log(`Sweep queued: ${key} ${direction} @ ${lvlPrice}`);
-    }
-
-    async function flushAlerts() {
-      if (!pendingAlerts.length) return;
-      const rolePings = [];
-      if (SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
-      if (SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
-      if (!rolePings.length) return;
-
-      const aboveHits = pendingAlerts.filter(a => a.direction === 'above');
-      const belowHits = pendingAlerts.filter(a => a.direction === 'below');
-      const dominant  = aboveHits.length >= belowHits.length ? 'above' : 'below';
-      const color     = dominant === 'above' ? 0x22d3ee : 0xf87171;
-      const emoji     = dominant === 'above' ? '🔼' : '🔽';
-
-      const lines = pendingAlerts.map(a => {
-        const dir = a.direction === 'above' ? '▲' : '▼';
-        return `${dir} **${a.label}** @ ${a.lvlPrice.toFixed(2)}`;
-      });
-
-      const title = pendingAlerts.length === 1
-        ? `${emoji} NQ — ${pendingAlerts[0].label} Swept ${dominant === 'above' ? 'Above' : 'Below'}`
-        : `${emoji} NQ — ${pendingAlerts.length} Levels Swept`;
-
-      const embed = new EmbedBuilder()
-        .setColor(color)
-        .setAuthor({ name: title })
-        .setDescription(lines.join('\n') + `\n\nCurrent price: **${price.toFixed(2)}**`)
-        .setTimestamp()
-        .setFooter({ text: '⚠️ ~10 min data delay · TSMP Sweep Monitor · The Smart Money Paradigm' });
-
-      await ch.send({ content: rolePings.join(' '), embeds: [embed] });
-    }
-
-    // ── CURRENT SESSION ──
-    const curSess = (() => {
-      if (hm >= 1080 || hm < 150) return 'asia';
-      if (hm >= 150  && hm < 420) return 'london';
-      if (hm >= 420  && hm < 690) return 'nyam';
-      if (hm >= 690  && hm < 960) return 'nypm';
-      return null;
-    })();
-
-    // ── UNIVERSAL LEVELS — PDH/PDL/PWH/PWL/PMH/PML/PreMH/PreML ──
-    const { pdh, pdl, pwh, pwl, pmh, pml, premh, preml } = _nqLevels;
-    if (pdh   && high > pdh)   collectAlert('pdh',   'PDH (Prev Day High)',   'above', pdh);
-    if (pdl   && low  < pdl)   collectAlert('pdl',   'PDL (Prev Day Low)',    'below', pdl);
-    if (pwh   && high > pwh)   collectAlert('pwh',   'PWH (Prev Week High)',  'above', pwh);
-    if (pwl   && low  < pwl)   collectAlert('pwl',   'PWL (Prev Week Low)',   'below', pwl);
-    if (pmh   && high > pmh)   collectAlert('pmh',   'PMH (Prev Month High)', 'above', pmh);
-    if (pml   && low  < pml)   collectAlert('pml',   'PML (Prev Month Low)',  'below', pml);
-    if (premh && high > premh) collectAlert('premh', 'PreMH (Pre-Mkt High)', 'above', premh);
-    if (preml && low  < preml) collectAlert('preml', 'PreML (Pre-Mkt Low)',  'below', preml);
-
-    // ── BUILD PRE-MARKET H/L (07:00–09:30 ET) ──
-    if (hm >= 420 && hm < 570) {
-      _nqLevels.premh = _nqLevels.premh === null ? high : Math.max(_nqLevels.premh, high);
-      _nqLevels.preml = _nqLevels.preml === null ? low  : Math.min(_nqLevels.preml, low);
-    }
-
-    // ── SESSION H/L — ASH/ASL, LOH/LOL, NYAH/NYAL, NYPH/NYPL ──
-    // Asia 18:00–02:30 → alerted London+
-    // London 02:30–07:00 → alerted NY AM+
-    // NY AM 07:00–11:30 → alerted NY PM+
-    // NY PM 11:30–16:00 → alerted Asia+
-    const SESS_DEF = [
-      { key: 'asia',   start: 1080, end: 150,  labelH: 'ASH',  labelL: 'ASL',  alertFrom: 150  },
-      { key: 'london', start: 150,  end: 420,  labelH: 'LOH',  labelL: 'LOL',  alertFrom: 420  },
-      { key: 'nyam',   start: 420,  end: 690,  labelH: 'NYAH', labelL: 'NYAL', alertFrom: 690  },
-      { key: 'nypm',   start: 690,  end: 960,  labelH: 'NYPH', labelL: 'NYPL', alertFrom: 1080 },
-    ];
-
-    for (const sess of SESS_DEF) {
-      const inSess = sess.start > sess.end
-        ? (hm >= sess.start || hm < sess.end)
-        : (hm >= sess.start && hm < sess.end);
-
-      if (inSess) {
-        if (!_tcSessions[sess.key]) _tcSessions[sess.key] = { h: null, l: null };
-        const sd = _tcSessions[sess.key];
-        sd.h = sd.h === null ? high : Math.max(sd.h, high);
-        sd.l = sd.l === null ? low  : Math.min(sd.l, low);
-      }
-
-      // Alert once session is over (alertFrom = start of next session)
-      const afterSess = sess.alertFrom > sess.end
-        ? (hm >= sess.alertFrom || hm < sess.end)   // wraps midnight (NYPH/NYPL → asia)
-        : (hm >= sess.alertFrom);
-      if (afterSess && _tcSessions[sess.key]) {
-        const sd = _tcSessions[sess.key];
-        if (sd.h && high > sd.h) collectAlert(`sess_${sess.key}_h`, `${sess.labelH}`, 'above', sd.h);
-        if (sd.l && low  < sd.l) collectAlert(`sess_${sess.key}_l`, `${sess.labelL}`, 'below', sd.l);
-      }
-    }
-
-    // ── AMD 90-MIN BLOCKS ──
-    // London:  A 02:30–04:00 | M 04:00–05:30 | D 05:30–07:00 → D alerted NY AM+
-    // NY AM:   A 07:00–08:30 | M 08:30–10:00 | D 10:00–11:30 → D alerted NY PM+
-    // NY PM:   A 11:30–13:00 | M 13:00–14:30 | D 14:30–16:00 → D alerted Asia+
-    // Rule: each block's H/L alerted during the NEXT block only (same session except D → next session)
-    const AMD_BLOCKS = [
-      { key: 'lon_a', label: 'London A', start: 150,  end: 240,  alertStart: 240,  alertEnd: 330  },
-      { key: 'lon_m', label: 'London M', start: 240,  end: 330,  alertStart: 330,  alertEnd: 420  },
-      { key: 'lon_d', label: 'London D', start: 330,  end: 420,  alertStart: 420,  alertEnd: 690  },
-      { key: 'nam_a', label: 'NY AM A',  start: 420,  end: 510,  alertStart: 510,  alertEnd: 600  },
-      { key: 'nam_m', label: 'NY AM M',  start: 510,  end: 600,  alertStart: 600,  alertEnd: 690  },
-      { key: 'nam_d', label: 'NY AM D',  start: 600,  end: 690,  alertStart: 690,  alertEnd: 960  },
-      { key: 'npm_a', label: 'NY PM A',  start: 690,  end: 780,  alertStart: 780,  alertEnd: 870  },
-      { key: 'npm_m', label: 'NY PM M',  start: 780,  end: 870,  alertStart: 870,  alertEnd: 960  },
-      { key: 'npm_d', label: 'NY PM D',  start: 870,  end: 960,  alertStart: 1080, alertEnd: 150  },
-    ];
-
-    for (const blk of AMD_BLOCKS) {
-      const inBlk = hm >= blk.start && hm < blk.end;
-      if (inBlk) {
-        if (!_qtBlocks[blk.key]) _qtBlocks[blk.key] = { h: null, l: null };
-        const bd = _qtBlocks[blk.key];
-        bd.h = bd.h === null ? high : Math.max(bd.h, high);
-        bd.l = bd.l === null ? low  : Math.min(bd.l, low);
-      }
-
-      // Alert window: alertStart → alertEnd (npm_d wraps midnight)
-      const inAlert = blk.alertStart > blk.alertEnd
-        ? (hm >= blk.alertStart || hm < blk.alertEnd)
-        : (hm >= blk.alertStart && hm < blk.alertEnd);
-
-      if (inAlert && _qtBlocks[blk.key]) {
-        const bd = _qtBlocks[blk.key];
-        if (bd.h && high > bd.h) collectAlert(`amd_${blk.key}_h`, `${blk.label} High`, 'above', bd.h);
-        if (bd.l && low  < bd.l) collectAlert(`amd_${blk.key}_l`, `${blk.label} Low`,  'below', bd.l);
-      }
-    }
-
-    await flushAlerts();
-
-    // Persist state so Railway restarts don't lose session/block data
-    _sweepStateSave();
-
-  } catch (e) { console.warn('NQ sweep poll error:', e.message); }
+  }
 }
 
 // ── Macro News Feed ──
@@ -2450,44 +2194,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (commandName === 'ping') {
         return interaction.reply({ content: `Pong! Latency: ${client.ws.ping}ms`, ephemeral: true });
-      }
-
-      if (commandName === 'nq') {
-        await interaction.deferReply({ ephemeral: false });
-        try {
-          const result = await _fetchNQCandles('1d', '1m');
-          const meta = result?.meta;
-          if (!meta) return interaction.editReply({ content: 'Failed to fetch NQ price.' });
-          const price     = meta.regularMarketPrice ?? meta.previousClose;
-          const prevClose = meta.previousClose;
-          const change    = price - prevClose;
-          const changePct = (change / prevClose) * 100;
-          const arrow     = change >= 0 ? '🔼' : '🔽';
-          const color     = change >= 0 ? 0x22d3ee : 0xf87171;
-          const tsEpoch   = meta.regularMarketTime;
-          const tsDisc    = tsEpoch ? `<t:${tsEpoch}:R>` : 'unknown';
-          const { pdh, pdl, pwh, pwl, pmh, pml, premh, preml } = _nqLevels;
-          const fmtLvl = v => v != null ? v.toFixed(2) : '—';
-          const embed = new EmbedBuilder()
-            .setColor(color)
-            .setTitle('📊  NQ Futures — Current Price')
-            .addFields(
-              { name: 'Price', value: `**${price.toFixed(2)}**`, inline: true },
-              { name: 'Change', value: `${arrow} ${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`, inline: true },
-              { name: 'Data As Of', value: tsDisc, inline: true },
-              { name: '━━━  Key Levels  ━━━', value:
-                `\`PDH\` ${fmtLvl(pdh)}  ·  \`PDL\` ${fmtLvl(pdl)}\n` +
-                `\`PWH\` ${fmtLvl(pwh)}  ·  \`PWL\` ${fmtLvl(pwl)}\n` +
-                `\`PMH\` ${fmtLvl(pmh)}  ·  \`PML\` ${fmtLvl(pml)}\n` +
-                `\`PreMH\` ${fmtLvl(premh)}  ·  \`PreML\` ${fmtLvl(preml)}`,
-                inline: false },
-            )
-            .setFooter({ text: '⚠️ ~10 min data delay · Yahoo Finance · The Smart Money Paradigm' })
-            .setTimestamp();
-          return interaction.editReply({ embeds: [embed] });
-        } catch (e) {
-          return interaction.editReply({ content: `Error fetching NQ price: ${e.message}` });
-        }
       }
 
       if (commandName === 'roadmap') {
@@ -3681,16 +3387,6 @@ client.once(Events.ClientReady, () => {
     }
   })();
 
-  // Start NQ sweep monitor — init levels, then poll every 30s
-  _refreshNQLevels()
-    .catch(e => console.warn('NQ init warning (will retry on poll):', e?.message || e?.code || String(e)));
-
-  // Poll every 30s
-  setInterval(() => {
-    _pollNQSweeps().catch(e => console.warn('sweep poll err:', e?.message || String(e)));
-  }, SWEEP_POLL_MS);
-  console.log('NQ sweep monitor started (every 30s, ~10min data delay)');
-
   // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
   setTimeout(() => {
     pollMacroNews().catch(e => console.error('macro news poll err:', e.message));
@@ -3710,46 +3406,59 @@ app.post('/sweep', async (req, res) => {
   try {
     const { level, direction, price, secret, ticker } = req.body;
 
-    if (secret !== SWEEP_WEBHOOK_SECRET) {
-      return res.status(403).json({ error: 'forbidden' });
-    }
-    if (!level || !direction) {
-      return res.status(400).json({ error: 'missing level or direction' });
-    }
-    if (!SWEEP_ALERT_CH_ID || !SWEEP_ROLE_ID) {
-      return res.status(503).json({ error: 'sweep alerts not configured — run /setup-sweep-alerts' });
-    }
+    if (secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
+    if (!level || !direction) return res.status(400).json({ error: 'missing level or direction' });
+    if (!SWEEP_ALERT_CH_ID) return res.status(503).json({ error: 'sweep alerts not configured — run /setup-sweep-alerts' });
 
     const guild = client.guilds.cache.first();
     if (!guild) return res.status(503).json({ error: 'bot not ready' });
     const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
     if (!ch) return res.status(503).json({ error: 'alert channel not found' });
 
-    const labelName = LEVEL_LABELS[level.toUpperCase()] || level.toUpperCase();
-    const isAbove = direction === 'broken_above' || direction === 'swept_above' || direction === 'above';
-    const dirLabel = isAbove ? '🔺 SWEPT ABOVE' : '🔻 SWEPT BELOW';
-    const dirColor = isAbove ? 0x22d3ee : 0xf87171;
-    const sym = ticker || 'NQ';
-    const priceStr = price ? `**${parseFloat(price).toFixed(2)}**` : '—';
+    const levelKey = level.toUpperCase();
+    const labelName = LEVEL_LABELS[levelKey] || levelKey;
+    const isAbove = ['above', 'swept_above', 'broken_above'].includes(direction);
+    const priceVal = price ? parseFloat(price) : null;
+    const priceStr = priceVal ? priceVal.toFixed(2) : null;
+
+    // Update session H/L tracker if price provided
+    if (priceVal) _tickSessionHL(isAbove ? priceVal : 0, isAbove ? 999999 : priceVal);
+
+    const hm = _nyHM();
+    const SESSION_LABELS = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
+    const curSess = hm >= 1080 || hm < 150 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
+    const sessLabel = SESSION_LABELS[curSess] || '—';
+
+    const color = isAbove ? 0x22d3ee : 0xf87171;
+    const arrow = isAbove ? '🔺' : '🔻';
+    const dirWord = isAbove ? 'Swept **Above**' : 'Swept **Below**';
+    const title = `${arrow}  NQ — **${labelName}** ${dirWord}`;
 
     const nyTime = new Date().toLocaleTimeString('en-US', {
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: true, timeZone: 'America/New_York'
+      hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/New_York'
     });
 
-    const embed = new EmbedBuilder()
-      .setColor(dirColor)
-      .setTitle(`${dirLabel}  ·  ${labelName}`)
-      .setDescription(
-        `**${sym}** swept through the **${labelName}**\n\n` +
-        `Price: ${priceStr}\n` +
-        `Direction: ${isAbove ? 'Above — potential liquidity grab above' : 'Below — potential liquidity grab below'}\n` +
-        `Time: \`${nyTime} ET\``
-      )
-      .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert' })
-      .setTimestamp();
+    const desc = [
+      `${arrow} **${labelName}** — ${isAbove ? 'swept **above**' : 'swept **below**'}${priceStr ? ` at \`${priceStr}\`` : ''}`,
+      ``,
+      `> 💰 **Current Price** — ${priceStr ? `\`${priceStr}\`` : '—'}`,
+      `> 🕐 **Session** — ${sessLabel}`,
+      `> 🗓️ **Time** — ${nyTime} ET`,
+    ].join('\n');
 
-    await ch.send({ content: `<@&${SWEEP_ROLE_ID}>`, embeds: [embed] });
+    const rolePings = [];
+    if (SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
+    if (SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
+
+    const embed = new EmbedBuilder()
+      .setColor(color)
+      .setTitle(title)
+      .setDescription(desc)
+      .setTimestamp()
+      .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert' });
+
+    await ch.send({ content: rolePings.join(' ') || undefined, embeds: [embed] });
+    console.log(`Webhook sweep: ${levelKey} ${direction} @ ${priceStr}`);
     res.json({ ok: true });
   } catch (e) {
     console.error('Sweep webhook error:', e.message);
