@@ -2515,41 +2515,47 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        if (!SWEEP_ALERT_CH_ID) return interaction.editReply({ content: 'Run `/setup-sweep-alerts` first.' });
+        const fmt = v => v != null ? `\`${v.toFixed(2)}\`` : '`—`';
+        const asia   = _tcSessions.asia   || {};
+        const london = _tcSessions.london || {};
+        const nyam   = _tcSessions.nyam   || {};
+        const nypm   = _tcSessions.nypm   || {};
 
-        const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
-        if (!ch) return interaction.editReply({ content: 'Sweep alerts channel not found.' });
+        const nyTime = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: true });
+        const hm = _nyHM();
+        const SESSION_LABELS = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
+        const curSessKey = hm >= 1080 || hm < 150 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
+        const curSessLabel = SESSION_LABELS[curSessKey] || '—';
 
-        const testLevels = [
-          { key: 'test_pdh',   label: 'PDH',   dir: 'above', price: 21743.00 },
-          { key: 'test_pdl',   label: 'PDL',   dir: 'below', price: 21522.25 },
-          { key: 'test_ash',   label: 'ASH',   dir: 'above', price: 21650.00 },
-          { key: 'test_loh',   label: 'LOH',   dir: 'above', price: 21580.00 },
-          { key: 'test_premh', label: 'PreMH', dir: 'above', price: 21500.00 },
-        ];
+        const lines = [
+          `**Current Session** — ${curSessLabel}  ·  ${nyTime} ET`,
+          ``,
+          `**━━ Universal Levels ━━**`,
+          `\`PDH\` Previous Day High — *(from Pine webhook)*`,
+          `\`PDL\` Previous Day Low  — *(from Pine webhook)*`,
+          `\`PWH\` Previous Week High — *(from Pine webhook)*`,
+          `\`PWL\` Previous Week Low  — *(from Pine webhook)*`,
+          `\`PMH\` Previous Month High — *(from Pine webhook)*`,
+          `\`PML\` Previous Month Low  — *(from Pine webhook)*`,
+          ``,
+          `**━━ Session Levels (built from incoming sweeps) ━━**`,
+          `\`ASH\` Asia High — ${fmt(asia.h)}   \`ASL\` Asia Low — ${fmt(asia.l)}`,
+          `\`LOH\` London High — ${fmt(london.h)}   \`LOL\` London Low — ${fmt(london.l)}`,
+          `\`NYAH\` NY AM High — ${fmt(nyam.h)}   \`NYAL\` NY AM Low — ${fmt(nyam.l)}`,
+          `\`NYPH\` NY PM High — ${fmt(nypm.h)}   \`NYPL\` NY PM Low — ${fmt(nypm.l)}`,
+          ``,
+          `**━━ Fired Today ━━**`,
+          Object.keys(_swept).length ? Object.keys(_swept).map(k => `\`${k}\``).join('  ') : '*none yet*',
+        ].join('\n');
 
-        for (const t of testLevels) {
-          const arrow   = t.dir === 'above' ? '🔺' : '🔻';
-          const color   = t.dir === 'above' ? 0x22d3ee : 0xf87171;
-          const dirWord = t.dir === 'above' ? 'swept **above**' : 'swept **below**';
-          const pingContent = SWEEP_TC_ROLE_ID ? `<@&${SWEEP_TC_ROLE_ID}>` : '*(no role yet)*';
-          const desc = [
-            `${arrow} **${LEVEL_LABELS[t.label] || t.label}** — ${dirWord} at \`${t.price.toFixed(2)}\``,
-            ``,
-            `> 💰 **Current Price** — \`${t.price.toFixed(2)}\``,
-            `> 🕐 **Session** — NY Morning`,
-            `> 🗓️ **Time** — TEST ET`,
-          ].join('\n');
-          const embed = new EmbedBuilder()
-            .setColor(color)
-            .setTitle(`${arrow}  NQ — **${LEVEL_LABELS[t.label] || t.label}** ${t.dir === 'above' ? 'Swept **Above**' : 'Swept **Below**'}`)
-            .setDescription(desc)
-            .setTimestamp()
-            .setFooter({ text: '⚠️ TEST ALERT — not a real sweep · The Smart Money Paradigm' });
-          await ch.send({ content: pingContent, embeds: [embed] });
-        }
+        const embed = new EmbedBuilder()
+          .setColor(0x22d3ee)
+          .setTitle('📡  Sweep Alerts — Live State')
+          .setDescription(lines)
+          .setTimestamp()
+          .setFooter({ text: '⚠️ Visible to staff only · The Smart Money Paradigm' });
 
-        return interaction.editReply({ content: `✅ Sent ${testLevels.length} test alerts to <#${SWEEP_ALERT_CH_ID}>.` });
+        return interaction.editReply({ embeds: [embed] });
       }
 
       if (commandName === 'setup-sweep-alerts') {
@@ -2595,17 +2601,20 @@ client.on(Events.InteractionCreate, async interaction => {
         SWEEP_ROLES_CH_ID = rolesAlertCh.id;
 
         // #📡〢sweep-alerts — only Sweep Alerts role holders can see
+        const sweepPerms = [
+          { id: everyoneRole.id, deny: ['ViewChannel'] },
+          { id: tcRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
+          { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+          { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+        ];
         let alertCh = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts');
         if (!alertCh) {
           alertCh = await guild.channels.create({
             name: '📡〢sweep-alerts', type: 0, parent: alertCat.id,
-            permissionOverwrites: [
-              { id: everyoneRole.id, deny: ['ViewChannel'] },
-              { id: tcRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
-              { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-              { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-            ],
+            permissionOverwrites: sweepPerms,
           });
+        } else {
+          await alertCh.permissionOverwrites.set(sweepPerms);
         }
         SWEEP_ALERT_CH_ID = alertCh.id;
 
