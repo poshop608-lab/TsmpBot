@@ -1433,13 +1433,10 @@ let _nqLevels = {
   premh: null, preml: null, // Pre-Market H/L (07:00-09:30 ET)
 };
 
-// QT Theory — 90-min Q block H/L (built during block, alerted next block)
-// Keys: qt_asia_q1, qt_asia_q2, qt_asia_q3, qt_lon_q1 ... qt_nypm_q3
-// Each: { h, l, stored }
+// AMD 90-min block H/L — keys: lon_a/m/d, nam_a/m/d, npm_a/m/d
 let _qtBlocks = {};
 
-// Time Cycle — session H/L (built during session, alerted next session)
-// Keys: tc_asia, tc_london, tc_nyam, tc_nypm
+// Session H/L — keys: asia, london, nyam, nypm
 let _tcSessions = {};
 
 // One-shot fired flags
@@ -1830,8 +1827,6 @@ function _sweepStateSave() {
       _lastSweepDay,
       _lastSweepWeek,
       _lastSweepMonth,
-      _trueOpens: typeof _trueOpens !== 'undefined' ? _trueOpens : null,
-      _trueOpenFired: typeof _trueOpenFired !== 'undefined' ? _trueOpenFired : {},
     }));
   } catch (e) { console.warn('sweep state save failed:', e.message); }
 }
@@ -1865,65 +1860,8 @@ function _nyHM() {
   return t.getHours() * 60 + t.getMinutes();
 }
 
-// QT Theory time blocks — 90-min quarters per session, anchored at 18:00 NY
-// Returns { session, q } or null
-function _qtBlock() {
-  const hm = _nyHM();
-  // Asia:   18:00-19:30(Q1) 19:30-21:00(Q2) 21:00-22:30(Q3) 22:30-00:00(Q4)
-  if (hm >= 1080 && hm < 1170) return { session: 'asia',  q: 1 };
-  if (hm >= 1170 && hm < 1260) return { session: 'asia',  q: 2 };
-  if (hm >= 1260 && hm < 1350) return { session: 'asia',  q: 3 };
-  if (hm >= 1350)               return { session: 'asia',  q: 4 };
-  // London: 00:00-01:30(Q1) 01:30-03:00(Q2) 03:00-04:30(Q3) 04:30-06:00(Q4)
-  if (hm >= 0   && hm < 90)  return { session: 'london', q: 1 };
-  if (hm >= 90  && hm < 180) return { session: 'london', q: 2 };
-  if (hm >= 180 && hm < 270) return { session: 'london', q: 3 };
-  if (hm >= 270 && hm < 360) return { session: 'london', q: 4 };
-  // NY AM:  06:00-07:30(Q1) 07:30-09:00(Q2) 09:00-10:30(Q3) 10:30-12:00(Q4)
-  if (hm >= 360 && hm < 450) return { session: 'nyam',   q: 1 };
-  if (hm >= 450 && hm < 540) return { session: 'nyam',   q: 2 };
-  if (hm >= 540 && hm < 630) return { session: 'nyam',   q: 3 };
-  if (hm >= 630 && hm < 720) return { session: 'nyam',   q: 4 };
-  // NY PM:  12:00-13:30(Q1) 13:30-15:00(Q2) 15:00-16:30(Q3) 16:30-18:00(Q4)
-  if (hm >= 720 && hm < 810) return { session: 'nypm',   q: 1 };
-  if (hm >= 810 && hm < 900) return { session: 'nypm',   q: 2 };
-  if (hm >= 900 && hm < 990) return { session: 'nypm',   q: 3 };
-  if (hm >= 990 && hm < 1080)return { session: 'nypm',   q: 4 };
-  return null;
-}
-
-// Time Cycle sessions (transcript timings)
-function _tcSession() {
-  const hm = _nyHM();
-  if (hm >= 1080 || hm < 150) return 'asia';    // 18:00-02:30
-  if (hm >= 150  && hm < 420) return 'london';  // 02:30-07:00
-  if (hm >= 420  && hm < 690) return 'nyam';    // 07:00-11:30
-  if (hm >= 690  && hm < 960) return 'nypm';    // 11:30-16:00
-  return null;
-}
-
-// True Open times (QT Theory) — price at Q2 open of each session
-const QT_TRUE_OPENS = {
-  tao: 19 * 60 + 30,  // Asia Q2  — 19:30 NY
-  tlo: 1  * 60 + 30,  // London Q2 — 01:30 NY
-  tny: 7  * 60 + 30,  // NY AM Q2  — 07:30 NY
-  tpm: 13 * 60 + 30,  // NY PM Q2  — 13:30 NY
-};
-let _trueOpens = { tao: null, tlo: null, tny: null, tpm: null };
-let _trueOpenFired = {};
-
 // Restore sweep state from file on startup
 _sweepStateLoad();
-// After restore, patch _trueOpens from saved state if available
-try {
-  const raw = fs.readFileSync(SWEEP_STATE_FILE, 'utf8');
-  const s = JSON.parse(raw);
-  const nyToday = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toDateString();
-  if (s._lastSweepDay === nyToday) {
-    if (s._trueOpens)     _trueOpens     = s._trueOpens;
-    if (s._trueOpenFired) _trueOpenFired = s._trueOpenFired;
-  }
-} catch (_) {}
 
 // ── Yahoo Finance cookie+crumb auth ──
 
@@ -2011,8 +1949,10 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
           `Alerts fire in ${sweepMention} · ⚠️ ~10 min data delay\n\n` +
           '**Universal Levels** *(always active)*\n' +
           '`PDH / PDL` · `PWH / PWL` · `PMH / PML` · `PreMH / PreML`\n\n' +
-          '**Cross-Session PXH / PXL**\n' +
-          '`Asia H/L` → alerted in **London** · `London H/L` → alerted in **NY AM** · `NY AM H/L` → alerted in **NY PM**',
+          '**Session Levels** *(once-only sweep alert)*\n' +
+          '`ASH/ASL` → alerted in London · `LOH/LOL` → alerted in NY AM\n' +
+          '`NYAH/NYAL` → alerted in NY PM · `NYPH/NYPL` → alerted in Asia\n' +
+          '`PreMH/PreML` built 07:00–09:30 ET · all levels lock after first sweep',
         inline: false,
       },
       {
@@ -2076,19 +2016,14 @@ async function _pollNQSweeps() {
     const weekN = `${ny.getFullYear()}-W${ny.getDay() === 0 ? Math.ceil(ny.getDate()/7)-1 : Math.ceil(ny.getDate()/7)}`;
     const monthN = `${ny.getFullYear()}-${ny.getMonth()}`;
 
-    // ── Daily reset ──
+    // ── Daily reset (midnight ET) ──
     if (_lastSweepDay !== today) {
       _lastSweepDay = today;
-      // Clear daily-scoped flags
       Object.keys(_swept).filter(k =>
-        ['pdh','pdl','prem'].some(p => k.startsWith(p)) ||
-        k.startsWith('tc_') || k.startsWith('qt_') ||
-        k.startsWith('to_') || k.startsWith('sess_')
+        ['pdh','pdl','prem','sess_','amd_'].some(p => k.startsWith(p))
       ).forEach(k => delete _swept[k]);
       _qtBlocks = {};
       _tcSessions = {};
-      _trueOpens = { tao: null, tlo: null, tny: null, tpm: null };
-      _trueOpenFired = {};
       _nqLevels.premh = null;
       _nqLevels.preml = null;
       await _refreshNQLevels();
@@ -2114,137 +2049,148 @@ async function _pollNQSweeps() {
     const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
     if (!ch) return;
 
-    // roleIds: array of role IDs to ping — 'both', 'tc', 'qt'
-    async function fireAlert(key, label, direction, lvlPrice, roleType) {
+    // Collect all sweeps this candle, send as one combined message
+    const pendingAlerts = []; // { key, label, direction, lvlPrice }
+
+    function collectAlert(key, label, direction, lvlPrice) {
       if (_swept[key]) return;
       _swept[key] = true;
-      const emoji   = direction === 'above' ? '🔼' : '🔽';
-      const color   = direction === 'above' ? 0x22d3ee : 0xf87171;
-      const dirText = direction === 'above' ? 'Swept Above' : 'Swept Below';
-      const rolePings = [];
-      if ((roleType === 'both' || roleType === 'tc') && SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
-      if ((roleType === 'both' || roleType === 'qt') && SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
-      if (!rolePings.length) return;
-      const roleTag = roleType === 'both' ? '📈 TC  📐 QT' : roleType === 'tc' ? '📈 Time Cycle' : '📐 QT Theory';
-      const embed = new EmbedBuilder()
-        .setColor(color)
-        .setAuthor({ name: `${emoji} NQ Sweep — ${label} ${dirText}` })
-        .setDescription(`**${label}** at **${lvlPrice.toFixed(2)}** swept.\nCurrent price: **${price.toFixed(2)}**`)
-        .addFields(
-          { name: 'Level', value: label, inline: true },
-          { name: 'Price', value: lvlPrice.toFixed(2), inline: true },
-          { name: 'Theory', value: roleTag, inline: true }
-        )
-        .setTimestamp()
-        .setFooter({ text: '⚠️ ~10 min data delay · TSMP Sweep Monitor · The Smart Money Paradigm' });
-      await ch.send({ content: rolePings.join(' '), embeds: [embed] });
-      console.log(`Sweep: ${key} ${dirText} @ ${lvlPrice}`);
+      pendingAlerts.push({ key, label, direction, lvlPrice });
+      console.log(`Sweep queued: ${key} ${direction} @ ${lvlPrice}`);
     }
 
-    // ── UNIVERSAL LEVELS (both roles) ──
-    const { pdh, pdl, pwh, pwl, pmh, pml, premh, preml } = _nqLevels;
-    if (pdh  && high > pdh)  await fireAlert('pdh',   'PDH (Prev Day High)',    'above', pdh,   'both');
-    if (pdl  && low  < pdl)  await fireAlert('pdl',   'PDL (Prev Day Low)',     'below', pdl,   'both');
-    if (pwh  && high > pwh)  await fireAlert('pwh',   'PWH (Prev Week High)',   'above', pwh,   'both');
-    if (pwl  && low  < pwl)  await fireAlert('pwl',   'PWL (Prev Week Low)',    'below', pwl,   'both');
-    if (pmh  && high > pmh)  await fireAlert('pmh',   'PMH (Prev Month High)',  'above', pmh,   'both');
-    if (pml  && low  < pml)  await fireAlert('pml',   'PML (Prev Month Low)',   'below', pml,   'both');
-    if (premh && high > premh) await fireAlert('premh', 'PreMH (Pre-Mkt High)', 'above', premh, 'both');
-    if (preml && low  < preml) await fireAlert('preml', 'PreML (Pre-Mkt Low)',  'below', preml, 'both');
+    async function flushAlerts() {
+      if (!pendingAlerts.length) return;
+      const rolePings = [];
+      if (SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
+      if (SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
+      if (!rolePings.length) return;
 
-    // ── BUILD PRE-MARKET H/L (07:00-09:30 ET) ──
+      const aboveHits = pendingAlerts.filter(a => a.direction === 'above');
+      const belowHits = pendingAlerts.filter(a => a.direction === 'below');
+      const dominant  = aboveHits.length >= belowHits.length ? 'above' : 'below';
+      const color     = dominant === 'above' ? 0x22d3ee : 0xf87171;
+      const emoji     = dominant === 'above' ? '🔼' : '🔽';
+
+      const lines = pendingAlerts.map(a => {
+        const dir = a.direction === 'above' ? '▲' : '▼';
+        return `${dir} **${a.label}** @ ${a.lvlPrice.toFixed(2)}`;
+      });
+
+      const title = pendingAlerts.length === 1
+        ? `${emoji} NQ — ${pendingAlerts[0].label} Swept ${dominant === 'above' ? 'Above' : 'Below'}`
+        : `${emoji} NQ — ${pendingAlerts.length} Levels Swept`;
+
+      const embed = new EmbedBuilder()
+        .setColor(color)
+        .setAuthor({ name: title })
+        .setDescription(lines.join('\n') + `\n\nCurrent price: **${price.toFixed(2)}**`)
+        .setTimestamp()
+        .setFooter({ text: '⚠️ ~10 min data delay · TSMP Sweep Monitor · The Smart Money Paradigm' });
+
+      await ch.send({ content: rolePings.join(' '), embeds: [embed] });
+    }
+
+    // ── CURRENT SESSION ──
+    const curSess = (() => {
+      if (hm >= 1080 || hm < 150) return 'asia';
+      if (hm >= 150  && hm < 420) return 'london';
+      if (hm >= 420  && hm < 690) return 'nyam';
+      if (hm >= 690  && hm < 960) return 'nypm';
+      return null;
+    })();
+
+    // ── UNIVERSAL LEVELS — PDH/PDL/PWH/PWL/PMH/PML/PreMH/PreML ──
+    const { pdh, pdl, pwh, pwl, pmh, pml, premh, preml } = _nqLevels;
+    if (pdh   && high > pdh)   collectAlert('pdh',   'PDH (Prev Day High)',   'above', pdh);
+    if (pdl   && low  < pdl)   collectAlert('pdl',   'PDL (Prev Day Low)',    'below', pdl);
+    if (pwh   && high > pwh)   collectAlert('pwh',   'PWH (Prev Week High)',  'above', pwh);
+    if (pwl   && low  < pwl)   collectAlert('pwl',   'PWL (Prev Week Low)',   'below', pwl);
+    if (pmh   && high > pmh)   collectAlert('pmh',   'PMH (Prev Month High)', 'above', pmh);
+    if (pml   && low  < pml)   collectAlert('pml',   'PML (Prev Month Low)',  'below', pml);
+    if (premh && high > premh) collectAlert('premh', 'PreMH (Pre-Mkt High)', 'above', premh);
+    if (preml && low  < preml) collectAlert('preml', 'PreML (Pre-Mkt Low)',  'below', preml);
+
+    // ── BUILD PRE-MARKET H/L (07:00–09:30 ET) ──
     if (hm >= 420 && hm < 570) {
       _nqLevels.premh = _nqLevels.premh === null ? high : Math.max(_nqLevels.premh, high);
       _nqLevels.preml = _nqLevels.preml === null ? low  : Math.min(_nqLevels.preml, low);
     }
 
-    // ── TIME CYCLE — cross-session PXH/PXL ──
-    // Sessions: asia 18:00-02:30, london 02:30-07:00, nyam 07:00-11:30, nypm 11:30-16:00
-    const TC_SESSIONS = [
-      { key: 'asia',   start: 1080, end: 150,  label: 'Asia',        alertDuring: 'london' },
-      { key: 'london', start: 150,  end: 420,  label: 'London',      alertDuring: 'nyam'   },
-      { key: 'nyam',   start: 420,  end: 690,  label: 'NY Morning',  alertDuring: 'nypm'   },
+    // ── SESSION H/L — ASH/ASL, LOH/LOL, NYAH/NYAL, NYPH/NYPL ──
+    // Asia 18:00–02:30 → alerted London+
+    // London 02:30–07:00 → alerted NY AM+
+    // NY AM 07:00–11:30 → alerted NY PM+
+    // NY PM 11:30–16:00 → alerted Asia+
+    const SESS_DEF = [
+      { key: 'asia',   start: 1080, end: 150,  labelH: 'ASH',  labelL: 'ASL',  alertFrom: 150  },
+      { key: 'london', start: 150,  end: 420,  labelH: 'LOH',  labelL: 'LOL',  alertFrom: 420  },
+      { key: 'nyam',   start: 420,  end: 690,  labelH: 'NYAH', labelL: 'NYAL', alertFrom: 690  },
+      { key: 'nypm',   start: 690,  end: 960,  labelH: 'NYPH', labelL: 'NYPL', alertFrom: 1080 },
     ];
 
-    const curTCSess = _tcSession();
-
-    for (const sess of TC_SESSIONS) {
-      // Build H/L while inside session
+    for (const sess of SESS_DEF) {
       const inSess = sess.start > sess.end
-        ? (hm >= sess.start || hm < sess.end)   // wraps midnight (asia)
+        ? (hm >= sess.start || hm < sess.end)
         : (hm >= sess.start && hm < sess.end);
+
       if (inSess) {
         if (!_tcSessions[sess.key]) _tcSessions[sess.key] = { h: null, l: null };
         const sd = _tcSessions[sess.key];
         sd.h = sd.h === null ? high : Math.max(sd.h, high);
         sd.l = sd.l === null ? low  : Math.min(sd.l, low);
       }
-      // Alert when inside the alertDuring session and levels exist
-      if (curTCSess === sess.alertDuring && _tcSessions[sess.key]) {
+
+      // Alert once session is over (alertFrom = start of next session)
+      const afterSess = sess.alertFrom > sess.end
+        ? (hm >= sess.alertFrom || hm < sess.end)   // wraps midnight (NYPH/NYPL → asia)
+        : (hm >= sess.alertFrom);
+      if (afterSess && _tcSessions[sess.key]) {
         const sd = _tcSessions[sess.key];
-        if (sd.h && high > sd.h) await fireAlert(`tc_${sess.key}_h`, `${sess.label} High (TC)`, 'above', sd.h, 'tc');
-        if (sd.l && low  < sd.l) await fireAlert(`tc_${sess.key}_l`, `${sess.label} Low (TC)`,  'below', sd.l, 'tc');
+        if (sd.h && high > sd.h) collectAlert(`sess_${sess.key}_h`, `${sess.labelH}`, 'above', sd.h);
+        if (sd.l && low  < sd.l) collectAlert(`sess_${sess.key}_l`, `${sess.labelL}`, 'below', sd.l);
       }
     }
 
-    // ── QT THEORY — 90-min Q block PXH/PXL ──
-    const curQT = _qtBlock();
-
-    const QT_BLOCKS = [
-      { session: 'asia',   q: 1, start: 1080, end: 1170 },
-      { session: 'asia',   q: 2, start: 1170, end: 1260 },
-      { session: 'asia',   q: 3, start: 1260, end: 1350 },
-      { session: 'london', q: 1, start: 0,    end: 90   },
-      { session: 'london', q: 2, start: 90,   end: 180  },
-      { session: 'london', q: 3, start: 180,  end: 270  },
-      { session: 'nyam',   q: 1, start: 360,  end: 450  },
-      { session: 'nyam',   q: 2, start: 450,  end: 540  },
-      { session: 'nyam',   q: 3, start: 540,  end: 630  },
-      { session: 'nypm',   q: 1, start: 720,  end: 810  },
-      { session: 'nypm',   q: 2, start: 810,  end: 900  },
-      { session: 'nypm',   q: 3, start: 900,  end: 990  },
+    // ── AMD 90-MIN BLOCKS ──
+    // London:  A 02:30–04:00 | M 04:00–05:30 | D 05:30–07:00 → D alerted NY AM+
+    // NY AM:   A 07:00–08:30 | M 08:30–10:00 | D 10:00–11:30 → D alerted NY PM+
+    // NY PM:   A 11:30–13:00 | M 13:00–14:30 | D 14:30–16:00 → D alerted Asia+
+    // Rule: each block's H/L alerted during the NEXT block only (same session except D → next session)
+    const AMD_BLOCKS = [
+      { key: 'lon_a', label: 'London A', start: 150,  end: 240,  alertStart: 240,  alertEnd: 330  },
+      { key: 'lon_m', label: 'London M', start: 240,  end: 330,  alertStart: 330,  alertEnd: 420  },
+      { key: 'lon_d', label: 'London D', start: 330,  end: 420,  alertStart: 420,  alertEnd: 690  },
+      { key: 'nam_a', label: 'NY AM A',  start: 420,  end: 510,  alertStart: 510,  alertEnd: 600  },
+      { key: 'nam_m', label: 'NY AM M',  start: 510,  end: 600,  alertStart: 600,  alertEnd: 690  },
+      { key: 'nam_d', label: 'NY AM D',  start: 600,  end: 690,  alertStart: 690,  alertEnd: 960  },
+      { key: 'npm_a', label: 'NY PM A',  start: 690,  end: 780,  alertStart: 780,  alertEnd: 870  },
+      { key: 'npm_m', label: 'NY PM M',  start: 780,  end: 870,  alertStart: 870,  alertEnd: 960  },
+      { key: 'npm_d', label: 'NY PM D',  start: 870,  end: 960,  alertStart: 1080, alertEnd: 150  },
     ];
 
-    const SESS_LABELS_QT = { asia: 'Asia', london: 'London', nyam: 'NY AM', nypm: 'NY PM' };
-
-    for (const blk of QT_BLOCKS) {
-      const bKey = `${blk.session}_q${blk.q}`;
-      const inBlk = blk.start > blk.end
-        ? (hm >= blk.start || hm < blk.end)
-        : (hm >= blk.start && hm < blk.end);
-
-      // Build H/L while inside block
+    for (const blk of AMD_BLOCKS) {
+      const inBlk = hm >= blk.start && hm < blk.end;
       if (inBlk) {
-        if (!_qtBlocks[bKey]) _qtBlocks[bKey] = { h: null, l: null };
-        const bd = _qtBlocks[bKey];
+        if (!_qtBlocks[blk.key]) _qtBlocks[blk.key] = { h: null, l: null };
+        const bd = _qtBlocks[blk.key];
         bd.h = bd.h === null ? high : Math.max(bd.h, high);
         bd.l = bd.l === null ? low  : Math.min(bd.l, low);
       }
 
-      // Alert during the NEXT block (same session, q+1)
-      const isNextBlock = curQT && curQT.session === blk.session && curQT.q === blk.q + 1;
-      if (isNextBlock && _qtBlocks[bKey]) {
-        const bd = _qtBlocks[bKey];
-        const sLabel = SESS_LABELS_QT[blk.session];
-        if (bd.h && high > bd.h) await fireAlert(`qt_${bKey}_h`, `${sLabel} Q${blk.q} High (QT)`, 'above', bd.h, 'qt');
-        if (bd.l && low  < bd.l) await fireAlert(`qt_${bKey}_l`, `${sLabel} Q${blk.q} Low (QT)`,  'below', bd.l, 'qt');
+      // Alert window: alertStart → alertEnd (npm_d wraps midnight)
+      const inAlert = blk.alertStart > blk.alertEnd
+        ? (hm >= blk.alertStart || hm < blk.alertEnd)
+        : (hm >= blk.alertStart && hm < blk.alertEnd);
+
+      if (inAlert && _qtBlocks[blk.key]) {
+        const bd = _qtBlocks[blk.key];
+        if (bd.h && high > bd.h) collectAlert(`amd_${blk.key}_h`, `${blk.label} High`, 'above', bd.h);
+        if (bd.l && low  < bd.l) collectAlert(`amd_${blk.key}_l`, `${blk.label} Low`,  'below', bd.l);
       }
     }
 
-    // ── QT TRUE OPENS — TAO/TLO/TNY/TPM swept ──
-    // Capture price at true open time
-    for (const [key, openHM] of Object.entries(QT_TRUE_OPENS)) {
-      if (hm >= openHM && hm < openHM + 2 && !_trueOpens[key]) {
-        _trueOpens[key] = price;
-      }
-    }
-    // Alert if true open level swept
-    const TO_LABELS = { tao: 'TAO (Asia Q2 Open)', tlo: 'TLO (London Q2 Open)', tny: 'TNY (NY AM Q2 Open)', tpm: 'TPM (NY PM Q2 Open)' };
-    for (const [key, lvl] of Object.entries(_trueOpens)) {
-      if (!lvl) continue;
-      if (high > lvl) await fireAlert(`to_${key}_h`, `${TO_LABELS[key]} swept above`, 'above', lvl, 'qt');
-      if (low  < lvl) await fireAlert(`to_${key}_l`, `${TO_LABELS[key]} swept below`, 'below', lvl, 'qt');
-    }
+    await flushAlerts();
 
     // Persist state so Railway restarts don't lose session/block data
     _sweepStateSave();
