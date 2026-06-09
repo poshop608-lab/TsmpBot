@@ -1631,7 +1631,7 @@ async function _spinGiveaway(interaction, messageId) {
   const elapsed = Date.now() - gifSentAt;
 
   // Wait exactly long enough so card posts when GIF finishes
-  const remaining = Math.max(0, GIF_DURATION_MS - elapsed + 200);
+  const remaining = Math.max(0, GIF_DURATION_MS - elapsed + 1200);
   const [cardBuf] = await Promise.all([
     cardBufPromise,
     new Promise(r => setTimeout(r, remaining)),
