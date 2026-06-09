@@ -1928,18 +1928,18 @@ async function _refreshNQLevels() {
     const il = intraday.indicators.quote[0].low;
     const its = intraday.timestamp;
     const ET_OFF = -4 * 60; // ET = UTC-4 (DST)
-    // Today's trading cycle starts at previous 18:00 ET (Asia open)
-    // Calculate cutoff: today's midnight ET minus 6h = yesterday 18:00 ET
-    const nowEt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const todayEtMidnight = new Date(nowEt); todayEtMidnight.setHours(0, 0, 0, 0);
-    const cycleStartEt = new Date(todayEtMidnight.getTime() - 6 * 3600 * 1000); // yesterday 18:00 ET
-    const cycleStartUtc = cycleStartEt.getTime() / 1000 - ET_OFF * 60; // convert back to UTC unix
+    // Today's Asia cycle starts at yesterday 18:00 ET = yesterday 22:00 UTC
+    // Asia opens 18:00 ET = 22:00 UTC (DST). Compute today's Asia open in UTC.
+    const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const etToday = new Date(etNow); etToday.setHours(0, 0, 0, 0);
+    // Yesterday 18:00 ET in UTC = yesterday 22:00 UTC (ET+4h)
+    const asiaOpenUtcSec = Math.floor((etToday.getTime() - 6 * 3600 * 1000) / 1000) + 4 * 3600;
     its.forEach((t, i) => {
       if (!ih[i] || !il[i]) return;
-      if (t < cycleStartUtc) return; // skip candles before today's cycle start
+      if (t < asiaOpenUtcSec) return; // skip candles before today's Asia open (18:00 ET yesterday)
       const hm = (Math.floor(t / 60) + ET_OFF + 1440) % 1440;
-      const inAsia   = hm >= 1080 || hm < 150;
-      const inLondon = hm >= 150  && hm < 420;
+      const inAsia   = hm >= 1080;
+      const inLondon = hm < 420;
       const inNyam   = hm >= 420  && hm < 690;
       const inNypm   = hm >= 690  && hm < 960;
       const inPre    = hm >= 420  && hm < 570;
@@ -2027,7 +2027,7 @@ async function _pollNQSweeps() {
 
       // Use same aesthetic format as TV webhook embeds
       const SESSION_LABELS_MAP = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
-      const curSessKey2 = hm >= 1080 || hm < 150 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
+      const curSessKey2 = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
       const sessLabel2  = SESSION_LABELS_MAP[curSessKey2] || '—';
       const nyTime2 = ny.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
@@ -2085,8 +2085,8 @@ async function _pollNQSweeps() {
 
     // Session H/L
     const SESS_DEF = [
-      { key: 'asia',   start: 1080, end: 150,  labelH: 'ASH',  labelL: 'ASL',  alertFrom: 150  },
-      { key: 'london', start: 150,  end: 420,  labelH: 'LOH',  labelL: 'LOL',  alertFrom: 420  },
+      { key: 'asia',   start: 1080, end: 1440, labelH: 'ASH',  labelL: 'ASL',  alertFrom: 0    },
+      { key: 'london', start: 0,    end: 420,  labelH: 'LOH',  labelL: 'LOL',  alertFrom: 420  },
       { key: 'nyam',   start: 420,  end: 690,  labelH: 'NYAH', labelL: 'NYAL', alertFrom: 690  },
       { key: 'nypm',   start: 690,  end: 960,  labelH: 'NYPH', labelL: 'NYPL', alertFrom: 1080 },
     ];
@@ -2196,8 +2196,8 @@ function _tickSessionHL(high, low) {
   }
 
   const SESS_DEF = [
-    { key: 'asia',   start: 1080, end: 150  },
-    { key: 'london', start: 150,  end: 420  },
+    { key: 'asia',   start: 1080, end: 1440 },
+    { key: 'london', start: 0,    end: 420  },
     { key: 'nyam',   start: 420,  end: 690  },
     { key: 'nypm',   start: 690,  end: 960  },
   ];
@@ -2852,7 +2852,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const nyTime = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: true });
         const hm = _nyHM();
         const SESSION_LABELS = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
-        const curSessKey = hm >= 1080 || hm < 150 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
+        const curSessKey = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
         const curSessLabel = SESSION_LABELS[curSessKey] || '—';
 
         const lines = [
@@ -3764,7 +3764,7 @@ app.post('/sweep', async (req, res) => {
 
     const hm = _nyHM();
     const SESSION_LABELS = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
-    const curSess = hm >= 1080 || hm < 150 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
+    const curSess = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
     const sessLabel = SESSION_LABELS[curSess] || '—';
 
     const color = isAbove ? 0x22d3ee : 0xf87171;
