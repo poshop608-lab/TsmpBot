@@ -1,6 +1,23 @@
 require('dotenv').config();
 const path = require('path');
+const https = require('https');
 const express = require('express');
+
+// Works on all Node versions (no native fetch needed)
+function httpsGet(url) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: 20000 }, res => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error('JSON parse failed: ' + data.slice(0, 100))); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('request timeout')); });
+  });
+}
 const { XMLParser } = require('fast-xml-parser');
 const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
 const {
@@ -1864,8 +1881,7 @@ async function _fetchNQCandles(range, interval) {
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-      const json = await res.json();
+      const json = await httpsGet(url);
       if (json.error) throw new Error('proxy error: ' + json.error);
       const result = json?.chart?.result?.[0];
       if (!result) throw new Error('no chart result: ' + JSON.stringify(json).slice(0, 120));
@@ -2748,8 +2764,7 @@ client.on(Events.InteractionCreate, async interaction => {
         try {
           const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(NQ_SYMBOL)}?interval=1d&range=5d`;
           const url = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
-          const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-          const json = await res.json();
+          const json = await httpsGet(url);
           if (json.error) throw new Error('proxy: ' + json.error);
           const result = json?.chart?.result?.[0];
           if (!result) throw new Error('no result: ' + JSON.stringify(json).slice(0, 200));
