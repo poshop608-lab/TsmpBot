@@ -1449,13 +1449,15 @@ let _lastSweepWeek = null;
 let _lastSweepMonth = null;
 
 // ── Giveaway ──
-const _giveaways = new Map(); // messageId → { channelId, title, prize, hostId, entrants: Set }
+const _giveaways = new Map();
+const GW_WHEEL_FRAMES = 70;
+const GW_WHEEL_FRAME_MS = 40; // messageId → { channelId, title, prize, hostId, entrants: Set }
 
 async function _buildWheelGif(names, winnerIndex) {
   const GIFEncoder = require('gif-encoder-2');
   const { createCanvas } = require('@napi-rs/canvas');
   const SIZE = 520, cx = SIZE/2, cy = SIZE/2, radius = 218;
-  const totalFrames = 70;
+  const totalFrames = GW_WHEEL_FRAMES;
   const n = names.length;
   const sliceAngle = (2*Math.PI)/n;
   const winnerAngle = -(winnerIndex*sliceAngle+sliceAngle/2);
@@ -1618,16 +1620,22 @@ async function _spinGiveaway(interaction, messageId) {
   const winnerName = winnerMember?.displayName || 'Winner';
   const avatarURL = winnerMember?.user?.displayAvatarURL({ extension: 'png', size: 256 }) || null;
 
-  // Send GIF + build card simultaneously
-  const [, cardBuf] = await Promise.all([
-    ch.send({ content: `🎰 **${gw.title}** — The wheel is spinning!`, files: [attachment] }),
-    _buildWinnerCard(winnerName, avatarURL, gw.prize, gw.title, entrantIds.length).catch(e => {
-      console.error('Winner card build failed:', e.message); return null;
-    }),
-  ]);
+  // Build card while GIF uploads — start timer the moment GIF message is sent
+  const GIF_DURATION_MS = GW_WHEEL_FRAMES * GW_WHEEL_FRAME_MS;
+  const cardBufPromise = _buildWinnerCard(winnerName, avatarURL, gw.prize, gw.title, entrantIds.length).catch(e => {
+    console.error('Winner card build failed:', e?.message || String(e)); return null;
+  });
 
-  // Wait for GIF to finish playing (70 frames × 40ms = 2.8s)
-  await new Promise(r => setTimeout(r, 3000));
+  const gifSentAt = Date.now();
+  await ch.send({ content: `🎰 **${gw.title}** — The wheel is spinning!`, files: [attachment] });
+  const elapsed = Date.now() - gifSentAt;
+
+  // Wait exactly long enough so card posts when GIF finishes
+  const remaining = Math.max(0, GIF_DURATION_MS - elapsed + 200);
+  const [cardBuf] = await Promise.all([
+    cardBufPromise,
+    new Promise(r => setTimeout(r, remaining)),
+  ]);
 
   await msg.edit({ embeds: [], components: [] });
 
