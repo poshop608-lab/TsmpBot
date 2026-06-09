@@ -1285,7 +1285,7 @@ let ENV_CH_ID = null;
 
 // ── Sweep Alerts ──
 const SWEEP_WEBHOOK_SECRET = process.env.SWEEP_SECRET || 'tsmp_sweep_secret';
-let SWEEP_TC_ROLE_ID   = null;  // 📈 Time Cycle Alerts role
+let SWEEP_TC_ROLE_ID   = null;  // 📡 Sweep Alerts role
 let SWEEP_QT_ROLE_ID   = null;  // 📐 QT Theory Alerts role
 let SWEEP_ALERT_CH_ID  = null;  // #📡〢sweep-alerts channel
 let SWEEP_ROLES_CH_ID  = null;  // #🔔〢alert-roles channel
@@ -1860,7 +1860,7 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
     .setDescription('Select the alerts you want. Click any button to **toggle your role on or off**.')
     .addFields(
       {
-        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈  TIME CYCLE ALERTS',
+        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📡  SWEEP ALERTS',
         value:
           `Alerts fire in ${sweepMention} · real-time via TradingView webhook\n\n` +
           '**Universal Levels** — always active, lock once swept\n' +
@@ -1891,7 +1891,7 @@ async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId
     .setFooter({ text: 'The Smart Money Paradigm  ·  Toggle roles below' });
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('sweep_tc_toggle').setLabel('📈  Time Cycle Alerts').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('sweep_tc_toggle').setLabel('📡  Sweep Alerts').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('vc_alert_toggle').setLabel('📅  VC Alerts').setStyle(ButtonStyle.Success),
   );
 
@@ -2521,35 +2521,32 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!ch) return interaction.editReply({ content: 'Sweep alerts channel not found.' });
 
         const testLevels = [
-          { key: 'test_pdh',    label: 'PDH (Prev Day High)',      dir: 'above', price: 29743.00, role: 'both' },
-          { key: 'test_pdl',    label: 'PDL (Prev Day Low)',       dir: 'below', price: 28822.25, role: 'both' },
-          { key: 'test_pmh',    label: 'PMH (Prev Month High)',    dir: 'above', price: 30807.75, role: 'both' },
-          { key: 'test_premh',  label: 'PreMH (Pre-Mkt High)',     dir: 'above', price: 29500.00, role: 'both' },
-          { key: 'test_tc_lon', label: 'London High (TC)',         dir: 'above', price: 29650.00, role: 'tc'   },
-          { key: 'test_qt_q2',  label: 'NY AM Q1 High (QT)',       dir: 'above', price: 29580.00, role: 'qt'   },
-          { key: 'test_tny',    label: 'TNY (NY AM Q2 Open)',      dir: 'below', price: 29450.00, role: 'qt'   },
+          { key: 'test_pdh',   label: 'PDH',   dir: 'above', price: 21743.00 },
+          { key: 'test_pdl',   label: 'PDL',   dir: 'below', price: 21522.25 },
+          { key: 'test_ash',   label: 'ASH',   dir: 'above', price: 21650.00 },
+          { key: 'test_loh',   label: 'LOH',   dir: 'above', price: 21580.00 },
+          { key: 'test_premh', label: 'PreMH', dir: 'above', price: 21500.00 },
         ];
 
         for (const t of testLevels) {
-          const emoji   = t.dir === 'above' ? '🔼' : '🔽';
+          const arrow   = t.dir === 'above' ? '🔺' : '🔻';
           const color   = t.dir === 'above' ? 0x22d3ee : 0xf87171;
-          const dirText = t.dir === 'above' ? 'Swept Above' : 'Swept Below';
-          const rolePings = [];
-          if ((t.role === 'both' || t.role === 'tc') && SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
-          if ((t.role === 'both' || t.role === 'qt') && SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
-          const roleTag = t.role === 'both' ? '📈 TC  📐 QT' : t.role === 'tc' ? '📈 Time Cycle' : '📐 QT Theory';
+          const dirWord = t.dir === 'above' ? 'swept **above**' : 'swept **below**';
+          const pingContent = SWEEP_TC_ROLE_ID ? `<@&${SWEEP_TC_ROLE_ID}>` : '*(no role yet)*';
+          const desc = [
+            `${arrow} **${LEVEL_LABELS[t.label] || t.label}** — ${dirWord} at \`${t.price.toFixed(2)}\``,
+            ``,
+            `> 💰 **Current Price** — \`${t.price.toFixed(2)}\``,
+            `> 🕐 **Session** — NY Morning`,
+            `> 🗓️ **Time** — TEST ET`,
+          ].join('\n');
           const embed = new EmbedBuilder()
             .setColor(color)
-            .setAuthor({ name: `${emoji} NQ Sweep — ${t.label} ${dirText}` })
-            .setDescription(`**${t.label}** at **${t.price.toFixed(2)}** swept.\nCurrent price: **${t.price.toFixed(2)}**`)
-            .addFields(
-              { name: 'Level', value: t.label, inline: true },
-              { name: 'Price', value: t.price.toFixed(2), inline: true },
-              { name: 'Theory', value: roleTag, inline: true }
-            )
+            .setTitle(`${arrow}  NQ — **${LEVEL_LABELS[t.label] || t.label}** ${t.dir === 'above' ? 'Swept **Above**' : 'Swept **Below**'}`)
+            .setDescription(desc)
             .setTimestamp()
-            .setFooter({ text: '⚠️ TEST ALERT — not a real sweep · TSMP Sweep Monitor' });
-          await ch.send({ content: rolePings.length ? rolePings.join(' ') : '*(no roles assigned yet)*', embeds: [embed] });
+            .setFooter({ text: '⚠️ TEST ALERT — not a real sweep · The Smart Money Paradigm' });
+          await ch.send({ content: pingContent, embeds: [embed] });
         }
 
         return interaction.editReply({ content: `✅ Sent ${testLevels.length} test alerts to <#${SWEEP_ALERT_CH_ID}>.` });
@@ -2563,14 +2560,16 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const everyoneRole = guild.roles.everyone;
 
-        // Create two alert roles
-        let tcRole = guild.roles.cache.find(r => r.name === '📈 Time Cycle Alerts');
-        if (!tcRole) tcRole = await guild.roles.create({ name: '📈 Time Cycle Alerts', color: 0x22d3ee, mentionable: true, reason: 'Sweep Alerts system' });
-        SWEEP_TC_ROLE_ID = tcRole.id;
+        // Delete old TC/QT roles if they exist
+        const oldTcRole = guild.roles.cache.find(r => r.name === '📈 Time Cycle Alerts');
+        if (oldTcRole) await oldTcRole.delete('Renamed to Sweep Alerts').catch(() => {});
+        const oldQtRole = guild.roles.cache.find(r => r.name === '📐 QT Theory Alerts');
+        if (oldQtRole) await oldQtRole.delete('QT Theory removed').catch(() => {});
 
-        let qtRole = guild.roles.cache.find(r => r.name === '📐 QT Theory Alerts');
-        if (!qtRole) qtRole = await guild.roles.create({ name: '📐 QT Theory Alerts', color: 0xa78bfa, mentionable: true, reason: 'Sweep Alerts system' });
-        SWEEP_QT_ROLE_ID = qtRole.id;
+        // Create single sweep alerts role
+        let tcRole = guild.roles.cache.find(r => r.name === '📡 Sweep Alerts');
+        if (!tcRole) tcRole = await guild.roles.create({ name: '📡 Sweep Alerts', color: 0x22d3ee, mentionable: true, reason: 'Sweep Alerts system' });
+        SWEEP_TC_ROLE_ID = tcRole.id;
 
         // Create ALERTS category
         let alertCat = guild.channels.cache.find(c => c.type === 4 && c.name === '〢 ALERTS');
@@ -2595,7 +2594,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         SWEEP_ROLES_CH_ID = rolesAlertCh.id;
 
-        // #📡〢sweep-alerts — only TC or QT role holders can see
+        // #📡〢sweep-alerts — only Sweep Alerts role holders can see
         let alertCh = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts');
         if (!alertCh) {
           alertCh = await guild.channels.create({
@@ -2603,7 +2602,6 @@ client.on(Events.InteractionCreate, async interaction => {
             permissionOverwrites: [
               { id: everyoneRole.id, deny: ['ViewChannel'] },
               { id: tcRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
-              { id: qtRole.id, allow: ['ViewChannel', 'ReadMessageHistory'], deny: ['SendMessages'] },
               { id: STAFF_ROLE_IDS[0], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
               { id: STAFF_ROLE_IDS[1], allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
             ],
@@ -2615,7 +2613,7 @@ client.on(Events.InteractionCreate, async interaction => {
         await _postCombinedAlertRoles(rolesAlertCh, alertCh.id, existingVcCh?.id);
 
         return interaction.editReply({
-          content: `✅ Done!\n\n**Roles:** <@&${tcRole.id}> · <@&${qtRole.id}>\n**Alert channel:** <#${alertCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>`,
+          content: `✅ Done!\n\n**Role:** <@&${tcRole.id}>\n**Alert channel:** <#${alertCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>`,
         });
       }
 
@@ -3012,23 +3010,18 @@ client.on(Events.InteractionCreate, async interaction => {
       const { guild, member, customId } = interaction;
 
       // ── Sweep role toggles ──
-      if (customId === 'sweep_tc_toggle' || customId === 'sweep_qt_toggle') {
+      if (customId === 'sweep_tc_toggle') {
         await interaction.deferReply({ ephemeral: true });
-        const isTC = customId === 'sweep_tc_toggle';
-        // Lazy-load role IDs if missing
-        if (!SWEEP_TC_ROLE_ID) { const r = interaction.guild.roles.cache.find(r => r.name === '📈 Time Cycle Alerts'); if (r) SWEEP_TC_ROLE_ID = r.id; }
-        if (!SWEEP_QT_ROLE_ID) { const r = interaction.guild.roles.cache.find(r => r.name === '📐 QT Theory Alerts');  if (r) SWEEP_QT_ROLE_ID = r.id; }
-        const roleId = isTC ? SWEEP_TC_ROLE_ID : SWEEP_QT_ROLE_ID;
-        const roleName = isTC ? '📈 Time Cycle Alerts' : '📐 QT Theory Alerts';
-        if (!roleId) return interaction.editReply({ content: 'Role not found. Ask staff to run `/setup-sweep-alerts`.' });
+        if (!SWEEP_TC_ROLE_ID) { const r = interaction.guild.roles.cache.find(r => r.name === '📡 Sweep Alerts'); if (r) SWEEP_TC_ROLE_ID = r.id; }
+        if (!SWEEP_TC_ROLE_ID) return interaction.editReply({ content: 'Role not found. Ask staff to run `/setup-sweep-alerts`.' });
         const m = interaction.member;
-        const has = m.roles.cache.has(roleId);
+        const has = m.roles.cache.has(SWEEP_TC_ROLE_ID);
         if (has) {
-          await m.roles.remove(roleId);
-          return interaction.editReply({ content: `🔕 Removed **${roleName}** — you will no longer receive these alerts.` });
+          await m.roles.remove(SWEEP_TC_ROLE_ID);
+          return interaction.editReply({ content: `🔕 Removed **📡 Sweep Alerts** — you will no longer receive these alerts.` });
         } else {
-          await m.roles.add(roleId);
-          return interaction.editReply({ content: `🔔 Added **${roleName}** — you will now be pinged for these NQ sweeps.` });
+          await m.roles.add(SWEEP_TC_ROLE_ID);
+          return interaction.editReply({ content: `🔔 Added **📡 Sweep Alerts** — you will now be pinged for NQ sweep alerts.` });
         }
       }
 
@@ -3346,10 +3339,8 @@ client.once(Events.ClientReady, () => {
     if (cal) { ENV_CH_ID = cal.id; console.log('economic-calendar channel found:', ENV_CH_ID); }
     const eng = guild.channels.cache.find(c => c.name === '🧠〢environment-selection' && c.parentId === ENV_CATEGORY_ID);
     if (eng) { ENV_ENGINE_CH_ID = eng.id; console.log('environment-selection channel found:', ENV_ENGINE_CH_ID); }
-    const tcRole = guild.roles.cache.find(r => r.name === '📈 Time Cycle Alerts');
-    if (tcRole) { SWEEP_TC_ROLE_ID = tcRole.id; console.log('TC Alerts role found:', SWEEP_TC_ROLE_ID); }
-    const qtRole = guild.roles.cache.find(r => r.name === '📐 QT Theory Alerts');
-    if (qtRole) { SWEEP_QT_ROLE_ID = qtRole.id; console.log('QT Alerts role found:', SWEEP_QT_ROLE_ID); }
+    const tcRole = guild.roles.cache.find(r => r.name === '📡 Sweep Alerts');
+    if (tcRole) { SWEEP_TC_ROLE_ID = tcRole.id; console.log('Sweep Alerts role found:', SWEEP_TC_ROLE_ID); }
     const sweepCh = guild.channels.cache.find(c => c.name === '📡〢sweep-alerts');
     if (sweepCh) { SWEEP_ALERT_CH_ID = sweepCh.id; console.log('sweep-alerts channel found:', SWEEP_ALERT_CH_ID); }
     const sweepRolesCh = guild.channels.cache.find(c => c.name === '🔔〢alert-roles');
@@ -3444,7 +3435,6 @@ app.post('/sweep', async (req, res) => {
 
     const rolePings = [];
     if (SWEEP_TC_ROLE_ID) rolePings.push(`<@&${SWEEP_TC_ROLE_ID}>`);
-    if (SWEEP_QT_ROLE_ID) rolePings.push(`<@&${SWEEP_QT_ROLE_ID}>`);
 
     const embed = new EmbedBuilder()
       .setColor(color)
