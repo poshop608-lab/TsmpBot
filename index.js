@@ -1903,9 +1903,18 @@ async function _refreshNQLevels() {
     else if (dhClean.length === 1) { _nqLevels.pdh = dhClean[0]; _nqLevels.pdl = dlClean[0]; }
 
     const weekly = await _fetchNQCandles('3mo', '1wk');
-    const whClean = weekly.indicators.quote[0].high.filter(v => v != null);
-    const wlClean = weekly.indicators.quote[0].low.filter(v => v != null);
-    if (whClean.length >= 2) { _nqLevels.pwh = whClean[whClean.length - 2]; _nqLevels.pwl = wlClean[wlClean.length - 2]; }
+    const whRaw = weekly.indicators.quote[0].high;
+    const wlRaw = weekly.indicators.quote[0].low;
+    const wts   = weekly.timestamp;
+    // Skip the current (incomplete) week — its candle timestamp is this week's Monday
+    const nowMs = Date.now();
+    const msPerWeek = 7 * 24 * 3600 * 1000;
+    // Find last fully-closed week (timestamp + 7 days < now)
+    let pwIdx = -1;
+    for (let i = whRaw.length - 1; i >= 0; i--) {
+      if (whRaw[i] != null && (wts[i] * 1000 + msPerWeek) < nowMs) { pwIdx = i; break; }
+    }
+    if (pwIdx >= 0) { _nqLevels.pwh = whRaw[pwIdx]; _nqLevels.pwl = wlRaw[pwIdx]; }
 
     const monthly = await _fetchNQCandles('2y', '1mo');
     const mhClean = monthly.indicators.quote[0].high.filter(v => v != null);
@@ -2782,11 +2791,17 @@ client.on(Events.InteractionCreate, async interaction => {
             _nqLevels.pdl = dlClean[0];
           }
           yfStatus = `✅ daily ok — highs: ${JSON.stringify(dhClean)}`;
-          // Weekly
+          // Weekly — find last fully-closed week
           const weekly = await _fetchNQCandles('3mo', '1wk');
-          const whClean = weekly.indicators.quote[0].high.filter(v => v != null);
-          const wlClean = weekly.indicators.quote[0].low.filter(v => v != null);
-          if (whClean.length >= 2) { _nqLevels.pwh = whClean[whClean.length - 2]; _nqLevels.pwl = wlClean[wlClean.length - 2]; }
+          const whRaw2 = weekly.indicators.quote[0].high;
+          const wlRaw2 = weekly.indicators.quote[0].low;
+          const wts2   = weekly.timestamp;
+          const msPerWeek2 = 7 * 24 * 3600 * 1000;
+          let pwIdx2 = -1;
+          for (let i = whRaw2.length - 1; i >= 0; i--) {
+            if (whRaw2[i] != null && (wts2[i] * 1000 + msPerWeek2) < Date.now()) { pwIdx2 = i; break; }
+          }
+          if (pwIdx2 >= 0) { _nqLevels.pwh = whRaw2[pwIdx2]; _nqLevels.pwl = wlRaw2[pwIdx2]; }
           // Monthly
           const monthly = await _fetchNQCandles('2y', '1mo');
           const mhClean = monthly.indicators.quote[0].high.filter(v => v != null);
