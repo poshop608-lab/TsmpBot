@@ -1922,7 +1922,27 @@ async function _refreshNQLevels() {
     if (mhClean.length >= 2) { _nqLevels.pmh = mhClean[mhClean.length - 2]; _nqLevels.pml = mlClean[mlClean.length - 2]; }
     else if (mhClean.length === 1) { _nqLevels.pmh = mhClean[0]; _nqLevels.pml = mlClean[0]; }
 
-    console.log('NQ levels refreshed:', JSON.stringify(_nqLevels));
+    // Seed today's session H/L from 1m candles
+    const intraday = await _fetchNQCandles('1d', '1m');
+    const ih = intraday.indicators.quote[0].high;
+    const il = intraday.indicators.quote[0].low;
+    const its = intraday.timestamp;
+    const ET_OFF = -4 * 60; // ET = UTC-4 (DST)
+    its.forEach((t, i) => {
+      if (!ih[i] || !il[i]) return;
+      const hm = (Math.floor(t / 60) + ET_OFF + 1440) % 1440;
+      const inAsia   = hm >= 1080 || hm < 150;
+      const inLondon = hm >= 150  && hm < 420;
+      const inNyam   = hm >= 420  && hm < 690;
+      const inNypm   = hm >= 690  && hm < 960;
+      const inPre    = hm >= 420  && hm < 570;
+      if (inAsia)   { if (!_tcSessions.asia)   _tcSessions.asia   = { h: null, l: null }; _tcSessions.asia.h   = _tcSessions.asia.h   === null ? ih[i] : Math.max(_tcSessions.asia.h,   ih[i]); _tcSessions.asia.l   = _tcSessions.asia.l   === null ? il[i] : Math.min(_tcSessions.asia.l,   il[i]); }
+      if (inLondon) { if (!_tcSessions.london) _tcSessions.london = { h: null, l: null }; _tcSessions.london.h = _tcSessions.london.h === null ? ih[i] : Math.max(_tcSessions.london.h, ih[i]); _tcSessions.london.l = _tcSessions.london.l === null ? il[i] : Math.min(_tcSessions.london.l, il[i]); }
+      if (inNyam)   { if (!_tcSessions.nyam)   _tcSessions.nyam   = { h: null, l: null }; _tcSessions.nyam.h   = _tcSessions.nyam.h   === null ? ih[i] : Math.max(_tcSessions.nyam.h,   ih[i]); _tcSessions.nyam.l   = _tcSessions.nyam.l   === null ? il[i] : Math.min(_tcSessions.nyam.l,   il[i]); }
+      if (inNypm)   { if (!_tcSessions.nypm)   _tcSessions.nypm   = { h: null, l: null }; _tcSessions.nypm.h   = _tcSessions.nypm.h   === null ? ih[i] : Math.max(_tcSessions.nypm.h,   ih[i]); _tcSessions.nypm.l   = _tcSessions.nypm.l   === null ? il[i] : Math.min(_tcSessions.nypm.l,   il[i]); }
+      if (inPre)    { _nqLevels.premh = _nqLevels.premh === null ? ih[i] : Math.max(_nqLevels.premh, ih[i]); _nqLevels.preml = _nqLevels.preml === null ? il[i] : Math.min(_nqLevels.preml, il[i]); }
+    });
+    console.log('NQ levels refreshed:', JSON.stringify(_nqLevels), '| sessions:', JSON.stringify(_tcSessions));
   } catch (e) { console.warn('NQ level refresh failed:', e.message); }
 }
 
