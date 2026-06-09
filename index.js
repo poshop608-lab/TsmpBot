@@ -2800,9 +2800,8 @@ client.on(Events.InteractionCreate, async interaction => {
         console.log('[test-sweep YF]', yfStatus, '| nqLevels:', JSON.stringify(_nqLevels));
 
         const fmt = v => v != null && !isNaN(v) ? `\`${parseFloat(v).toFixed(2)}\`` : '`—`';
-        // Pine heartbeat takes priority, fall back to YF
-        const fv = key => _pineLevels[key] ?? _nqLevels[key] ?? null;
-        // Session levels from _tcSessions
+        // YF only for now — Pine/_pineLevels wired in later when friend gets Plus
+        const n = _nqLevels;
         const asia   = _tcSessions.asia   || {};
         const london = _tcSessions.london || {};
         const nyam   = _tcSessions.nyam   || {};
@@ -2816,23 +2815,23 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const lines = [
           `**Current Session** — ${curSessLabel}  ·  ${nyTime} ET`,
-          `📡 YF: \`${yfStatus.slice(0, 80)}\``,
+          yfStatus.startsWith('❌') ? `⚠️ YF: \`${yfStatus.slice(0, 100)}\`` : '',
           ``,
           `**━━ Universal Levels ━━**`,
-          `\`PDH\` ${fmt(fv('pdh'))}   \`PDL\` ${fmt(fv('pdl'))}`,
-          `\`PWH\` ${fmt(fv('pwh'))}   \`PWL\` ${fmt(fv('pwl'))}`,
-          `\`PMH\` ${fmt(fv('pmh'))}   \`PML\` ${fmt(fv('pml'))}`,
-          `\`PreMH\` ${fmt(fv('premh'))}   \`PreML\` ${fmt(fv('preml'))}`,
+          `\`PDH\` ${fmt(n.pdh)}   \`PDL\` ${fmt(n.pdl)}`,
+          `\`PWH\` ${fmt(n.pwh)}   \`PWL\` ${fmt(n.pwl)}`,
+          `\`PMH\` ${fmt(n.pmh)}   \`PML\` ${fmt(n.pml)}`,
+          `\`PreMH\` ${fmt(n.premh)}   \`PreML\` ${fmt(n.preml)}`,
           ``,
           `**━━ Session Levels ━━**`,
-          `\`ASH\` ${fmt(_pineLevels.ash ?? asia.h)}   \`ASL\` ${fmt(_pineLevels.asl ?? asia.l)}`,
-          `\`LOH\` ${fmt(_pineLevels.loh ?? london.h)}   \`LOL\` ${fmt(_pineLevels.lol ?? london.l)}`,
-          `\`NYAH\` ${fmt(_pineLevels.nyah ?? nyam.h)}   \`NYAL\` ${fmt(_pineLevels.nyal ?? nyam.l)}`,
-          `\`NYPH\` ${fmt(_pineLevels.nyph ?? nypm.h)}   \`NYPL\` ${fmt(_pineLevels.nypl ?? nypm.l)}`,
+          `\`ASH\` ${fmt(asia.h)}   \`ASL\` ${fmt(asia.l)}`,
+          `\`LOH\` ${fmt(london.h)}   \`LOL\` ${fmt(london.l)}`,
+          `\`NYAH\` ${fmt(nyam.h)}   \`NYAL\` ${fmt(nyam.l)}`,
+          `\`NYPH\` ${fmt(nypm.h)}   \`NYPL\` ${fmt(nypm.l)}`,
           ``,
           `**━━ Fired Today ━━**`,
           Object.keys(_swept).length ? Object.keys(_swept).map(k => `\`${k}\``).join('  ') : '*none yet*',
-        ].join('\n');
+        ].filter(l => l !== '').join('\n');
 
         const embed = new EmbedBuilder()
           .setColor(0x22d3ee)
