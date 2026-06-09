@@ -1637,11 +1637,11 @@ async function _spinGiveaway(interaction, messageId) {
     new Promise(r => setTimeout(r, remaining)),
   ]);
 
-  await msg.edit({ embeds: [], components: [] });
+  await msg.edit({ embeds: [], components: [] }).catch(() => {});
 
   if (cardBuf) {
     const cardAttachment = new AttachmentBuilder(cardBuf, { name: 'winner.png' });
-    await ch.send({ content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁`, files: [cardAttachment] });
+    await ch.send({ content: `🎉 <@${winnerId}> won **${gw.prize}**! 🎁`, files: [cardAttachment] });
   } else {
     await ch.send({ content: `🎉 Congratulations <@${winnerId}>! You won **${gw.prize}**! 🎁` });
   }
@@ -3433,7 +3433,10 @@ client.on(Events.InteractionCreate, async interaction => {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'Only staff can spin the wheel.', ephemeral: true });
         const msgId = customId.replace('gw_spin_', '');
-        await _spinGiveaway(interaction, msgId);
+        _spinGiveaway(interaction, msgId).catch(e => {
+          console.error('Spin giveaway error:', e?.message || String(e));
+          interaction.followUp({ content: `Spin failed: ${e?.message || 'unknown error'}`, ephemeral: true }).catch(() => {});
+        });
         return;
       }
 
