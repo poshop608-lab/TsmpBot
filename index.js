@@ -1934,7 +1934,8 @@ async function _yfRefreshAuth() {
 }
 
 async function _fetchNQCandles(range, interval) {
-  const url = `${YF_PROXY_URL}?symbol=${encodeURIComponent(NQ_SYMBOL)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`;
+  const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(NQ_SYMBOL)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`;
+  const url = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
 
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
