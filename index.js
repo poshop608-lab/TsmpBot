@@ -1884,6 +1884,7 @@ async function _refreshNQLevels() {
     const dhClean = daily.indicators.quote[0].high.filter(v => v != null);
     const dlClean = daily.indicators.quote[0].low.filter(v => v != null);
     if (dhClean.length >= 2) { _nqLevels.pdh = dhClean[dhClean.length - 2]; _nqLevels.pdl = dlClean[dlClean.length - 2]; }
+    else if (dhClean.length === 1) { _nqLevels.pdh = dhClean[0]; _nqLevels.pdl = dlClean[0]; }
 
     const weekly = await _fetchNQCandles('3mo', '1wk');
     const whClean = weekly.indicators.quote[0].high.filter(v => v != null);
@@ -2743,6 +2744,7 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.deferReply({ ephemeral: true });
 
         // Force a fresh YF fetch — bypass internal catch to surface errors
+        let yfDebug = '';
         try {
           const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(NQ_SYMBOL)}?interval=1d&range=5d`;
           const url = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
@@ -2751,11 +2753,22 @@ client.on(Events.InteractionCreate, async interaction => {
           if (json.error) throw new Error('proxy: ' + json.error);
           const result = json?.chart?.result?.[0];
           if (!result) throw new Error('no result: ' + JSON.stringify(json).slice(0, 200));
-          const dhClean = result.indicators.quote[0].high.filter(v => v != null);
-          const dlClean = result.indicators.quote[0].low.filter(v => v != null);
-          if (dhClean.length >= 2) { _nqLevels.pdh = dhClean[dhClean.length - 2]; _nqLevels.pdl = dlClean[dlClean.length - 2]; }
+          const dhRaw = result.indicators.quote[0].high;
+          const dlRaw = result.indicators.quote[0].low;
+          const dhClean = dhRaw.filter(v => v != null);
+          const dlClean = dlRaw.filter(v => v != null);
+          yfDebug = `raw highs: ${JSON.stringify(dhRaw)}\nclean: ${JSON.stringify(dhClean)} (len=${dhClean.length})`;
+          if (dhClean.length >= 2) {
+            _nqLevels.pdh = dhClean[dhClean.length - 2];
+            _nqLevels.pdl = dlClean[dlClean.length - 2];
+          } else if (dhClean.length === 1) {
+            _nqLevels.pdh = dhClean[0];
+            _nqLevels.pdl = dlClean[0];
+          }
+          // Also refresh weekly + monthly
+          await _refreshNQLevels();
         } catch (e) {
-          return interaction.editReply({ content: `❌ YF fetch failed: \`${e.message}\`` });
+          return interaction.editReply({ content: `❌ YF fetch failed: \`${e.message}\`\n\`\`\`${yfDebug}\`\`\`` });
         }
 
         const fmt = v => v != null && !isNaN(v) ? `\`${parseFloat(v).toFixed(2)}\`` : '`—`';
