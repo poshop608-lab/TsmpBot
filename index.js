@@ -1841,6 +1841,8 @@ function _sweepStateSave() {
       _tcSessions,
       _swept,
       _lastSweepDay,
+      _lastSweepWeek,
+      _lastSweepMonth,
     }));
   } catch (e) { console.warn('sweep state save failed:', e.message); }
 }
@@ -1855,10 +1857,12 @@ function _sweepStateLoad() {
       console.log('Sweep state stale (different day) — starting fresh');
       return;
     }
-    if (s._tcSessions)   _tcSessions   = s._tcSessions;
-    if (s._swept)        _swept        = s._swept;
-    if (s._lastSweepDay) _lastSweepDay = s._lastSweepDay;
-    console.log('Sweep state restored for', nyToday);
+    if (s._tcSessions)    _tcSessions    = s._tcSessions;
+    if (s._swept)         _swept         = s._swept;
+    if (s._lastSweepDay)  _lastSweepDay  = s._lastSweepDay;
+    if (s._lastSweepWeek) _lastSweepWeek = s._lastSweepWeek;
+    if (s._lastSweepMonth) _lastSweepMonth = s._lastSweepMonth;
+    console.log('Sweep state restored for', nyToday, '| swept keys:', Object.keys(_swept).length);
   } catch (_) { /* no file yet, fine */ }
 }
 
@@ -1951,6 +1955,67 @@ async function _refreshNQLevels() {
     });
     console.log('NQ levels refreshed:', JSON.stringify(_nqLevels), '| sessions:', JSON.stringify(_tcSessions));
   } catch (e) { console.warn('NQ level refresh failed:', e.message); }
+}
+
+// Seed _swept locks from current price on startup — prevents re-fire after process restart.
+// If price is already past a level, lock it immediately so we don't re-alert.
+async function _seedSweptFromCurrentPrice() {
+  try {
+    const result = await _fetchNQCandles('1d', '1m');
+    const quotes = result.indicators.quote[0];
+    const ts = result.timestamp;
+    if (!ts || !ts.length) return;
+    const idx = ts.length - 1;
+    const high  = quotes.high[idx];
+    const low   = quotes.low[idx];
+    if (!high || !low) return;
+
+    const hm = _nyHM();
+
+    // Seed universal level locks
+    const lvl = {
+      pdh:   _pineLevels.pdh   || _nqLevels.pdh,
+      pdl:   _pineLevels.pdl   || _nqLevels.pdl,
+      pwh:   _pineLevels.pwh   || _nqLevels.pwh,
+      pwl:   _pineLevels.pwl   || _nqLevels.pwl,
+      pmh:   _pineLevels.pmh   || _nqLevels.pmh,
+      pml:   _pineLevels.pml   || _nqLevels.pml,
+      premh: _pineLevels.premh || _nqLevels.premh,
+      preml: _pineLevels.preml || _nqLevels.preml,
+    };
+    if (lvl.pdh   && high > lvl.pdh   && !_swept.pdh)   { _swept.pdh   = true; }
+    if (lvl.pdl   && low  < lvl.pdl   && !_swept.pdl)   { _swept.pdl   = true; }
+    if (lvl.pwh   && high > lvl.pwh   && !_swept.pwh)   { _swept.pwh   = true; }
+    if (lvl.pwl   && low  < lvl.pwl   && !_swept.pwl)   { _swept.pwl   = true; }
+    if (lvl.pmh   && high > lvl.pmh   && !_swept.pmh)   { _swept.pmh   = true; }
+    if (lvl.pml   && low  < lvl.pml   && !_swept.pml)   { _swept.pml   = true; }
+    if (lvl.premh && high > lvl.premh && hm >= 570 && !_swept.premh) { _swept.premh = true; }
+    if (lvl.preml && low  < lvl.preml && hm >= 570 && !_swept.preml) { _swept.preml = true; }
+
+    // Seed session level locks — only for closed sessions
+    const SESS_SEED = [
+      { key: 'asia',   end: 0,   labelH: 'ASH',  labelL: 'ASL'  },
+      { key: 'london', end: 420, labelH: 'LOH',  labelL: 'LOL'  },
+      { key: 'nyam',   end: 690, labelH: 'NYAH', labelL: 'NYAL' },
+      { key: 'nypm',   end: 960, labelH: 'NYPH', labelL: 'NYPL' },
+    ];
+    const curSessKey = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
+    for (const s of SESS_SEED) {
+      if (s.key === curSessKey) continue; // skip active session
+      const sd = _tcSessions[s.key];
+      if (!sd) continue;
+      const sH = _pineLevels[s.labelH.toLowerCase()] || sd.h;
+      const sL = _pineLevels[s.labelL.toLowerCase()] || sd.l;
+      if (sH && high > sH && !_swept[`sess_${s.key}_h`]) _swept[`sess_${s.key}_h`] = true;
+      if (sL && low  < sL && !_swept[`sess_${s.key}_l`]) _swept[`sess_${s.key}_l`] = true;
+    }
+
+    const seeded = Object.keys(_swept).length;
+    if (seeded > 0) {
+      console.log(`[sweep seed] Pre-locked ${seeded} already-swept levels at startup:`, Object.keys(_swept).join(', '));
+      _sweepStateSave();
+    }
+  } catch (e) { console.warn('[sweep seed] failed:', e.message); }
 }
 
 async function _pollNQSweeps() {
@@ -2084,17 +2149,21 @@ async function _pollNQSweeps() {
     }
 
     // Session H/L
+    // Asia wraps midnight: start=1080 (18:00), end=0 (00:00). inSess uses wrap logic.
     const SESS_DEF = [
-      { key: 'asia',   start: 1080, end: 1440, labelH: 'ASH',  labelL: 'ASL',  alertFrom: 0    },
-      { key: 'london', start: 0,    end: 420,  labelH: 'LOH',  labelL: 'LOL',  alertFrom: 420  },
-      { key: 'nyam',   start: 420,  end: 690,  labelH: 'NYAH', labelL: 'NYAL', alertFrom: 690  },
-      { key: 'nypm',   start: 690,  end: 960,  labelH: 'NYPH', labelL: 'NYPL', alertFrom: 1080 },
+      { key: 'asia',   start: 1080, end: 0,   labelH: 'ASH',  labelL: 'ASL'  },
+      { key: 'london', start: 0,    end: 420,  labelH: 'LOH',  labelL: 'LOL'  },
+      { key: 'nyam',   start: 420,  end: 690,  labelH: 'NYAH', labelL: 'NYAL' },
+      { key: 'nypm',   start: 690,  end: 960,  labelH: 'NYPH', labelL: 'NYPL' },
     ];
 
     for (const sess of SESS_DEF) {
-      const inSess = sess.start > sess.end
-        ? (hm >= sess.start || hm < sess.end)
-        : (hm >= sess.start && hm < sess.end);
+      // Asia: hm >= 1080 (18:00–23:59). end=0 means exact midnight boundary.
+      const inSess = sess.end === 0
+        ? (hm >= sess.start)
+        : (sess.start > sess.end
+            ? (hm >= sess.start || hm < sess.end)
+            : (hm >= sess.start && hm < sess.end));
 
       if (inSess) {
         if (!_tcSessions[sess.key]) _tcSessions[sess.key] = { h: null, l: null };
@@ -2103,11 +2172,8 @@ async function _pollNQSweeps() {
         sd.l = sd.l === null ? low  : Math.min(sd.l, low);
       }
 
-      const afterSess = sess.alertFrom > sess.end
-        ? (hm >= sess.alertFrom || hm < sess.end)
-        : (hm >= sess.alertFrom);
-
-      if (afterSess && _tcSessions[sess.key]) {
+      // Only alert when session has ended (not currently active)
+      if (!inSess && _tcSessions[sess.key]) {
         const sd = _tcSessions[sess.key];
         // Prefer Pine session levels if available
         const sH = _pineLevels[sess.labelH.toLowerCase()] || sd.h;
@@ -2196,16 +2262,18 @@ function _tickSessionHL(high, low) {
   }
 
   const SESS_DEF = [
-    { key: 'asia',   start: 1080, end: 1440 },
-    { key: 'london', start: 0,    end: 420  },
-    { key: 'nyam',   start: 420,  end: 690  },
-    { key: 'nypm',   start: 690,  end: 960  },
+    { key: 'asia',   start: 1080, end: 0   },
+    { key: 'london', start: 0,    end: 420 },
+    { key: 'nyam',   start: 420,  end: 690 },
+    { key: 'nypm',   start: 690,  end: 960 },
   ];
 
   for (const sess of SESS_DEF) {
-    const inSess = sess.start > sess.end
-      ? (hm >= sess.start || hm < sess.end)
-      : (hm >= sess.start && hm < sess.end);
+    const inSess = sess.end === 0
+      ? (hm >= sess.start)
+      : (sess.start > sess.end
+          ? (hm >= sess.start || hm < sess.end)
+          : (hm >= sess.start && hm < sess.end));
     if (inSess) {
       if (!_tcSessions[sess.key]) _tcSessions[sess.key] = { h: null, l: null };
       const sd = _tcSessions[sess.key];
@@ -2844,16 +2912,28 @@ client.on(Events.InteractionCreate, async interaction => {
         const fmt = v => v != null && !isNaN(v) ? `\`${parseFloat(v).toFixed(2)}\`` : '`—`';
         // YF only for now — Pine/_pineLevels wired in later when friend gets Plus
         const n = _nqLevels;
-        const asia   = _tcSessions.asia   || {};
-        const london = _tcSessions.london || {};
-        const nyam   = _tcSessions.nyam   || {};
-        const nypm   = _tcSessions.nypm   || {};
 
         const nyTime = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: true });
         const hm = _nyHM();
-        const SESSION_LABELS = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
+        const SESSION_LABELS = { asia: 'Asia (18:00–00:00)', london: 'London (00:00–07:00)', nyam: 'NY Morning (07:00–11:30)', nypm: 'NY Afternoon (11:30–16:00)' };
         const curSessKey = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
         const curSessLabel = SESSION_LABELS[curSessKey] || '—';
+
+        // Only show session H/L for completed sessions (not the active one)
+        const sessDisplay = [
+          { key: 'asia',   lH: 'ASH',  lL: 'ASL'  },
+          { key: 'london', lH: 'LOH',  lL: 'LOL'  },
+          { key: 'nyam',   lH: 'NYAH', lL: 'NYAL' },
+          { key: 'nypm',   lH: 'NYPH', lL: 'NYPL' },
+        ].map(s => {
+          const sd = _tcSessions[s.key] || {};
+          const isActive = s.key === curSessKey;
+          const label = SESSION_LABELS[s.key] || s.key;
+          if (isActive) {
+            return `\`${s.lH}\` *in progress*   \`${s.lL}\` *in progress*  *(${label})*`;
+          }
+          return `\`${s.lH}\` ${fmt(sd.h)}   \`${s.lL}\` ${fmt(sd.l)}`;
+        });
 
         const lines = [
           `**Current Session** — ${curSessLabel}  ·  ${nyTime} ET`,
@@ -2866,10 +2946,7 @@ client.on(Events.InteractionCreate, async interaction => {
           `\`PreMH\` ${fmt(n.premh)}   \`PreML\` ${fmt(n.preml)}`,
           ``,
           `**━━ Session Levels ━━**`,
-          `\`ASH\` ${fmt(asia.h)}   \`ASL\` ${fmt(asia.l)}`,
-          `\`LOH\` ${fmt(london.h)}   \`LOL\` ${fmt(london.l)}`,
-          `\`NYAH\` ${fmt(nyam.h)}   \`NYAL\` ${fmt(nyam.l)}`,
-          `\`NYPH\` ${fmt(nypm.h)}   \`NYPL\` ${fmt(nypm.l)}`,
+          ...sessDisplay,
           ``,
           `**━━ Fired Today ━━**`,
           Object.keys(_swept).length ? Object.keys(_swept).map(k => `\`${k}\``).join('  ') : '*none yet*',
@@ -3712,6 +3789,7 @@ client.once(Events.ClientReady, () => {
 
   // Start NQ sweep monitor (YF polling ~30s, ~10min data delay)
   _refreshNQLevels()
+    .then(() => _seedSweptFromCurrentPrice())
     .catch(e => console.warn('NQ init warning:', e?.message || String(e)));
   setInterval(() => {
     _pollNQSweeps().catch(e => console.warn('sweep poll err:', e?.message || String(e)));
