@@ -1421,17 +1421,29 @@ async function _tickVcCountdown() {
 }
 
 // ── NQ Sweep Monitor ──
-// Levels pushed via TV webhook — no YF polling
+const SWEEP_POLL_MS = 30 * 1000;
+const NQ_SYMBOL = 'NQ=F';
+const YF_PROXY_URL = 'https://yf-proxy.poshop608.workers.dev';
+
+// Static levels refreshed daily/weekly/monthly from YF
+let _nqLevels = {
+  pdh: null, pdl: null,
+  pwh: null, pwl: null,
+  pmh: null, pml: null,
+  premh: null, preml: null,
+};
 
 // Session H/L — keys: asia, london, nyam, nypm
 let _tcSessions = {};
 
-// Universal levels from Pine heartbeat
-let _pineLevels = {};  // { pdh, pdl, pwh, pwl, pmh, pml, premh, preml, ash, asl, loh, lol, nyah, nyal, nyph, nypl }
+// Universal levels from Pine heartbeat (TV webhook, overrides YF if available)
+let _pineLevels = {};
 
 // One-shot fired flags
 let _swept = {};
-let _lastSweepDay = null;
+let _lastSweepDay  = null;
+let _lastSweepWeek = null;
+let _lastSweepMonth = null;
 
 // ── Giveaway ──
 const _giveaways = new Map();
@@ -1845,6 +1857,218 @@ function _nyHM() {
 // Restore sweep state from file on startup
 _sweepStateLoad();
 
+
+async function _fetchNQCandles(range, interval) {
+  const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(NQ_SYMBOL)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`;
+  const url = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      const json = await res.json();
+      if (json.error) throw new Error('proxy error: ' + json.error);
+      const result = json?.chart?.result?.[0];
+      if (!result) throw new Error('no chart result: ' + JSON.stringify(json).slice(0, 120));
+      return result;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  throw lastErr;
+}
+
+async function _refreshNQLevels() {
+  try {
+    const daily = await _fetchNQCandles('5d', '1d');
+    const dhClean = daily.indicators.quote[0].high.filter(v => v != null);
+    const dlClean = daily.indicators.quote[0].low.filter(v => v != null);
+    if (dhClean.length >= 2) { _nqLevels.pdh = dhClean[dhClean.length - 2]; _nqLevels.pdl = dlClean[dlClean.length - 2]; }
+
+    const weekly = await _fetchNQCandles('3mo', '1wk');
+    const whClean = weekly.indicators.quote[0].high.filter(v => v != null);
+    const wlClean = weekly.indicators.quote[0].low.filter(v => v != null);
+    if (whClean.length >= 2) { _nqLevels.pwh = whClean[whClean.length - 2]; _nqLevels.pwl = wlClean[wlClean.length - 2]; }
+
+    const monthly = await _fetchNQCandles('2y', '1mo');
+    const mhClean = monthly.indicators.quote[0].high.filter(v => v != null);
+    const mlClean = monthly.indicators.quote[0].low.filter(v => v != null);
+    if (mhClean.length >= 2) { _nqLevels.pmh = mhClean[mhClean.length - 2]; _nqLevels.pml = mlClean[mlClean.length - 2]; }
+    else if (mhClean.length === 1) { _nqLevels.pmh = mhClean[0]; _nqLevels.pml = mlClean[0]; }
+
+    console.log('NQ levels refreshed:', JSON.stringify(_nqLevels));
+  } catch (e) { console.warn('NQ level refresh failed:', e.message); }
+}
+
+async function _pollNQSweeps() {
+  if (!SWEEP_ALERT_CH_ID) return;
+  if (!SWEEP_TC_ROLE_ID) return;
+
+  if (!_nqLevels.pdh || !_nqLevels.pdl) {
+    await _refreshNQLevels().catch(e => console.warn('level retry failed:', e?.message));
+  }
+
+  try {
+    const result = await _fetchNQCandles('1d', '1m');
+    const quotes = result.indicators.quote[0];
+    const timestamps = result.timestamp;
+    if (!timestamps || !timestamps.length) return;
+
+    const lastIdx = timestamps.length - 1;
+    const high  = quotes.high[lastIdx];
+    const low   = quotes.low[lastIdx];
+    const price = quotes.close[lastIdx] || high;
+    if (!high || !low) return;
+
+    const ny     = _nyTime();
+    const hm     = _nyHM();
+    const today  = ny.toDateString();
+    const weekN  = `${ny.getFullYear()}-W${Math.ceil((ny.getDate() - ny.getDay() + 1) / 7)}`;
+    const monthN = `${ny.getFullYear()}-${ny.getMonth()}`;
+
+    // Daily reset
+    if (_lastSweepDay !== today) {
+      _lastSweepDay = today;
+      Object.keys(_swept).filter(k =>
+        ['pdh','pdl','prem','sess_'].some(p => k.startsWith(p))
+      ).forEach(k => delete _swept[k]);
+      _tcSessions = {};
+      _nqLevels.premh = null;
+      _nqLevels.preml = null;
+      await _refreshNQLevels();
+      _sweepStateSave();
+    }
+
+    if (_lastSweepWeek !== weekN) {
+      _lastSweepWeek = weekN;
+      ['pwh','pwl'].forEach(k => delete _swept[k]);
+      await _refreshNQLevels();
+    }
+
+    if (_lastSweepMonth !== monthN) {
+      _lastSweepMonth = monthN;
+      ['pmh','pml'].forEach(k => delete _swept[k]);
+      await _refreshNQLevels();
+    }
+
+    const guild = client.guilds.cache.first();
+    if (!guild) return;
+    const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
+    if (!ch) return;
+
+    const pendingAlerts = [];
+
+    function collectAlert(key, label, direction, lvlPrice) {
+      if (_swept[key]) return;
+      _swept[key] = true;
+      pendingAlerts.push({ key, label, direction, lvlPrice });
+    }
+
+    async function flushAlerts() {
+      if (!pendingAlerts.length) return;
+      const rolePings = SWEEP_TC_ROLE_ID ? [`<@&${SWEEP_TC_ROLE_ID}>`] : [];
+
+      const dominant = pendingAlerts.filter(a => a.direction === 'above').length >= pendingAlerts.filter(a => a.direction === 'below').length ? 'above' : 'below';
+      const color    = dominant === 'above' ? 0x22d3ee : 0xf87171;
+      const arrow    = dominant === 'above' ? '🔺' : '🔻';
+
+      // Use same aesthetic format as TV webhook embeds
+      const SESSION_LABELS_MAP = { asia: 'Asia', london: 'London', nyam: 'NY Morning', nypm: 'NY Afternoon' };
+      const curSessKey2 = hm >= 1080 || hm < 150 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
+      const sessLabel2  = SESSION_LABELS_MAP[curSessKey2] || '—';
+      const nyTime2 = ny.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+      const descLines = pendingAlerts.map(a => {
+        const ar = a.direction === 'above' ? '🔺' : '🔻';
+        const dw = a.direction === 'above' ? 'swept **above**' : 'swept **below**';
+        return `${ar} **${LEVEL_LABELS[a.label] || a.label}** — ${dw} at \`${a.lvlPrice.toFixed(2)}\``;
+      });
+
+      descLines.push('');
+      descLines.push(`> 💰 **Current Price** — \`${price.toFixed(2)}\``);
+      descLines.push(`> 🕐 **Session** — ${sessLabel2}`);
+      descLines.push(`> 🗓️ **Time** — ${nyTime2} ET`);
+
+      const title = pendingAlerts.length === 1
+        ? `${arrow}  NQ — **${LEVEL_LABELS[pendingAlerts[0].label] || pendingAlerts[0].label}** ${dominant === 'above' ? 'Swept **Above**' : 'Swept **Below**'}`
+        : `${arrow}  NQ — **${pendingAlerts.length} Levels Swept**`;
+
+      const embed = new EmbedBuilder()
+        .setColor(color)
+        .setTitle(title)
+        .setDescription(descLines.join('\n'))
+        .setTimestamp()
+        .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert (YF ~10min delay)' });
+
+      await ch.send({ content: rolePings.join(' ') || undefined, embeds: [embed] });
+    }
+
+    // Use Pine levels if available (TV webhook), fall back to YF
+    const lvl = {
+      pdh:   _pineLevels.pdh   || _nqLevels.pdh,
+      pdl:   _pineLevels.pdl   || _nqLevels.pdl,
+      pwh:   _pineLevels.pwh   || _nqLevels.pwh,
+      pwl:   _pineLevels.pwl   || _nqLevels.pwl,
+      pmh:   _pineLevels.pmh   || _nqLevels.pmh,
+      pml:   _pineLevels.pml   || _nqLevels.pml,
+      premh: _pineLevels.premh || _nqLevels.premh,
+      preml: _pineLevels.preml || _nqLevels.preml,
+    };
+
+    if (lvl.pdh   && high > lvl.pdh)   collectAlert('pdh',   'PDH', 'above', lvl.pdh);
+    if (lvl.pdl   && low  < lvl.pdl)   collectAlert('pdl',   'PDL', 'below', lvl.pdl);
+    if (lvl.pwh   && high > lvl.pwh)   collectAlert('pwh',   'PWH', 'above', lvl.pwh);
+    if (lvl.pwl   && low  < lvl.pwl)   collectAlert('pwl',   'PWL', 'below', lvl.pwl);
+    if (lvl.pmh   && high > lvl.pmh)   collectAlert('pmh',   'PMH', 'above', lvl.pmh);
+    if (lvl.pml   && low  < lvl.pml)   collectAlert('pml',   'PML', 'below', lvl.pml);
+    if (lvl.premh && high > lvl.premh && hm >= 570) collectAlert('premh', 'PreMH', 'above', lvl.premh);
+    if (lvl.preml && low  < lvl.preml && hm >= 570) collectAlert('preml', 'PreML', 'below', lvl.preml);
+
+    // Build pre-market H/L
+    if (hm >= 420 && hm < 570) {
+      _nqLevels.premh = _nqLevels.premh === null ? high : Math.max(_nqLevels.premh, high);
+      _nqLevels.preml = _nqLevels.preml === null ? low  : Math.min(_nqLevels.preml, low);
+    }
+
+    // Session H/L
+    const SESS_DEF = [
+      { key: 'asia',   start: 1080, end: 150,  labelH: 'ASH',  labelL: 'ASL',  alertFrom: 150  },
+      { key: 'london', start: 150,  end: 420,  labelH: 'LOH',  labelL: 'LOL',  alertFrom: 420  },
+      { key: 'nyam',   start: 420,  end: 690,  labelH: 'NYAH', labelL: 'NYAL', alertFrom: 690  },
+      { key: 'nypm',   start: 690,  end: 960,  labelH: 'NYPH', labelL: 'NYPL', alertFrom: 1080 },
+    ];
+
+    for (const sess of SESS_DEF) {
+      const inSess = sess.start > sess.end
+        ? (hm >= sess.start || hm < sess.end)
+        : (hm >= sess.start && hm < sess.end);
+
+      if (inSess) {
+        if (!_tcSessions[sess.key]) _tcSessions[sess.key] = { h: null, l: null };
+        const sd = _tcSessions[sess.key];
+        sd.h = sd.h === null ? high : Math.max(sd.h, high);
+        sd.l = sd.l === null ? low  : Math.min(sd.l, low);
+      }
+
+      const afterSess = sess.alertFrom > sess.end
+        ? (hm >= sess.alertFrom || hm < sess.end)
+        : (hm >= sess.alertFrom);
+
+      if (afterSess && _tcSessions[sess.key]) {
+        const sd = _tcSessions[sess.key];
+        // Prefer Pine session levels if available
+        const sH = _pineLevels[sess.labelH.toLowerCase()] || sd.h;
+        const sL = _pineLevels[sess.labelL.toLowerCase()] || sd.l;
+        if (sH && high > sH) collectAlert(`sess_${sess.key}_h`, sess.labelH, 'above', sH);
+        if (sL && low  < sL) collectAlert(`sess_${sess.key}_l`, sess.labelL, 'below', sL);
+      }
+    }
+
+    await flushAlerts();
+    _sweepStateSave();
+
+  } catch (e) { console.warn('NQ sweep poll error:', e.message); }
+}
 
 async function _postCombinedAlertRoles(rolesAlertCh, sweepAlertChId, vcSchedChId) {
   // Delete existing bot messages in alert-roles to avoid duplicates
@@ -3380,6 +3604,14 @@ client.once(Events.ClientReady, () => {
       } catch (e) { console.warn(`Startup cache refresh failed (${week}): ${e.message}`); }
     }
   })();
+
+  // Start NQ sweep monitor (YF polling ~30s, ~10min data delay)
+  _refreshNQLevels()
+    .catch(e => console.warn('NQ init warning:', e?.message || String(e)));
+  setInterval(() => {
+    _pollNQSweeps().catch(e => console.warn('sweep poll err:', e?.message || String(e)));
+  }, SWEEP_POLL_MS);
+  console.log('NQ sweep monitor started (YF, every 30s)');
 
   // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
   setTimeout(() => {
