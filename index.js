@@ -2053,6 +2053,11 @@ async function _pollNQSweeps() {
   if (!SWEEP_ALERT_CH_ID) return;
   if (!SWEEP_TC_ROLE_ID && !SWEEP_QT_ROLE_ID) return;
 
+  // Retry level fetch if still null (e.g. startup fetch failed)
+  if (!_nqLevels.pdh || !_nqLevels.pdl) {
+    await _refreshNQLevels().catch(e => console.warn('level retry failed:', e?.message));
+  }
+
   try {
     const result = await _fetchNQCandles('1d', '1m');
     const quotes = result.indicators.quote[0];
