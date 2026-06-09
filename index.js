@@ -1922,14 +1922,21 @@ async function _refreshNQLevels() {
     if (mhClean.length >= 2) { _nqLevels.pmh = mhClean[mhClean.length - 2]; _nqLevels.pml = mlClean[mlClean.length - 2]; }
     else if (mhClean.length === 1) { _nqLevels.pmh = mhClean[0]; _nqLevels.pml = mlClean[0]; }
 
-    // Seed today's session H/L from 1m candles
-    const intraday = await _fetchNQCandles('1d', '1m');
+    // Seed today's session H/L from 1m candles (2d to catch Asia 18:00 ET from yesterday evening)
+    const intraday = await _fetchNQCandles('2d', '1m');
     const ih = intraday.indicators.quote[0].high;
     const il = intraday.indicators.quote[0].low;
     const its = intraday.timestamp;
     const ET_OFF = -4 * 60; // ET = UTC-4 (DST)
+    // Today's trading cycle starts at previous 18:00 ET (Asia open)
+    // Calculate cutoff: today's midnight ET minus 6h = yesterday 18:00 ET
+    const nowEt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const todayEtMidnight = new Date(nowEt); todayEtMidnight.setHours(0, 0, 0, 0);
+    const cycleStartEt = new Date(todayEtMidnight.getTime() - 6 * 3600 * 1000); // yesterday 18:00 ET
+    const cycleStartUtc = cycleStartEt.getTime() / 1000 - ET_OFF * 60; // convert back to UTC unix
     its.forEach((t, i) => {
       if (!ih[i] || !il[i]) return;
+      if (t < cycleStartUtc) return; // skip candles before today's cycle start
       const hm = (Math.floor(t / 60) + ET_OFF + 1440) % 1440;
       const inAsia   = hm >= 1080 || hm < 150;
       const inLondon = hm >= 150  && hm < 420;
