@@ -2742,9 +2742,18 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        // Force a fresh YF fetch and show result immediately
+        // Force a fresh YF fetch — bypass internal catch to surface errors
         try {
-          await _refreshNQLevels();
+          const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(NQ_SYMBOL)}?interval=1d&range=5d`;
+          const url = `${YF_PROXY_URL}?url=${encodeURIComponent(yfUrl)}`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          const json = await res.json();
+          if (json.error) throw new Error('proxy: ' + json.error);
+          const result = json?.chart?.result?.[0];
+          if (!result) throw new Error('no result: ' + JSON.stringify(json).slice(0, 200));
+          const dhClean = result.indicators.quote[0].high.filter(v => v != null);
+          const dlClean = result.indicators.quote[0].low.filter(v => v != null);
+          if (dhClean.length >= 2) { _nqLevels.pdh = dhClean[dhClean.length - 2]; _nqLevels.pdl = dlClean[dlClean.length - 2]; }
         } catch (e) {
           return interaction.editReply({ content: `❌ YF fetch failed: \`${e.message}\`` });
         }
