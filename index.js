@@ -3311,6 +3311,69 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ── Modal submit ──
     if (interaction.isModalSubmit()) {
+
+      // ── Access intake modal → create ticket with answers ──
+      if (interaction.customId === 'access_intake_modal') {
+        await interaction.deferReply({ ephemeral: true });
+
+        const journey  = interaction.fields.getTextInputValue('intake_journey').trim();
+        const learner  = interaction.fields.getTextInputValue('intake_learner').trim();
+        const invest   = interaction.fields.getTextInputValue('intake_invest').trim();
+        const referred = interaction.fields.getTextInputValue('intake_referred')?.trim() || '—';
+
+        const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
+        if (!ticketsCh) return interaction.editReply({ content: 'Tickets channel not found.' });
+
+        const existing = ticketsCh.threads.cache.find(
+          t => t.name === `ticket-${member.user.username}` && !t.archived
+        );
+        if (existing) return interaction.editReply({ content: `You already have an open ticket: ${existing}` });
+
+        const thread = await ticketsCh.threads.create({
+          name: `ticket-${member.user.username}`,
+          autoArchiveDuration: 1440,
+          type: 12,
+          invitable: false,
+          reason: `Access request from ${member.user.tag}`,
+        });
+
+        await thread.members.add(member.user.id);
+        const allMembers = await guild.members.fetch();
+        for (const m of allMembers.values()) {
+          if (m.user.bot) continue;
+          if (STAFF_ROLE_IDS.some(id => m.roles.cache.has(id))) {
+            await thread.members.add(m.id).catch(() => {});
+          }
+        }
+
+        await thread.send({ content: `<@${member.user.id}> — a staff member will be with you shortly.` });
+
+        const intakeEmbed = new EmbedBuilder()
+          .setColor(0x111111)
+          .setTitle(`📋  Application — ${member.user.username}`)
+          .addFields(
+            { name: 'Trading Journey & Struggles', value: journey },
+            { name: 'Fast Learner (1–10)', value: learner, inline: true },
+            { name: 'Willing to Invest', value: invest, inline: true },
+            { name: 'Referred By', value: referred, inline: true },
+          )
+          .setFooter({ text: 'The Smart Money Paradigm  ·  Staff only' });
+
+        const assignRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`assign_vol1_${member.user.id}`).setLabel('Volume I').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`assign_vol2_${member.user.id}`).setLabel('Volume II').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`assign_vol3_${member.user.id}`).setLabel('Volume III').setStyle(ButtonStyle.Danger),
+        );
+        const closeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`close_ticket_${member.user.id}`).setLabel('Close Ticket').setStyle(ButtonStyle.Secondary),
+        );
+
+        await thread.send({ embeds: [intakeEmbed], components: [assignRow] });
+        await thread.send({ components: [closeRow] });
+
+        return interaction.editReply({ content: `Application submitted. A staff member will review it shortly: ${thread}` });
+      }
+
       if (interaction.customId.startsWith('env_edit_day_')) {
         await interaction.deferReply({ ephemeral: true });
         const day = interaction.customId.replace('env_edit_day_', '');
@@ -3564,79 +3627,57 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.channel.delete().catch(() => {});
       }
 
-      // ── Open ticket ──
+      // ── Open ticket — show intake modal first ──
       if (customId === 'open_ticket') {
-        await interaction.deferReply({ ephemeral: true });
-
         const hasVolume = Object.values(VOLUME_ROLES).some(v => member.roles.cache.has(v.id));
-        if (hasVolume) return interaction.editReply({ content: 'You already have a role assigned.' });
+        if (hasVolume) return interaction.reply({ content: 'You already have a role assigned.', ephemeral: true });
 
-        // Check existing open ticket thread
         const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
-        const existing = ticketsCh.threads.cache.find(
+        const existing = ticketsCh?.threads.cache.find(
           t => t.name === `ticket-${member.user.username}` && !t.archived
         );
-        if (existing) return interaction.editReply({ content: `You already have an open ticket: ${existing}` });
+        if (existing) return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
 
-        // Create private thread in tickets channel
-        const thread = await ticketsCh.threads.create({
-          name: `ticket-${member.user.username}`,
-          autoArchiveDuration: 1440,
-          type: 12, // PRIVATE_THREAD
-          invitable: false,
-          reason: `Access request from ${member.user.tag}`,
-        });
+        const modal = new ModalBuilder()
+          .setCustomId('access_intake_modal')
+          .setTitle('Access Application');
 
-        // Add only the requesting member
-        await thread.members.add(member.user.id);
-
-        // Add only staff members
-        const allMembers = await guild.members.fetch();
-        for (const m of allMembers.values()) {
-          if (m.user.bot) continue;
-          if (STAFF_ROLE_IDS.some(id => m.roles.cache.has(id))) {
-            await thread.members.add(m.id).catch(() => {});
-          }
-        }
-
-        // Staff assignment buttons with correct colors
-        const assignRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`assign_vol1_${member.user.id}`)
-            .setLabel('Volume I')
-            .setStyle(ButtonStyle.Success),   // green
-          new ButtonBuilder()
-            .setCustomId(`assign_vol2_${member.user.id}`)
-            .setLabel('Volume II')
-            .setStyle(ButtonStyle.Primary),   // blurple (closest to gold)
-          new ButtonBuilder()
-            .setCustomId(`assign_vol3_${member.user.id}`)
-            .setLabel('Volume III')
-            .setStyle(ButtonStyle.Danger),    // red
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('intake_journey')
+              .setLabel('Describe your Trading Journey and struggles')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+              .setMaxLength(500)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('intake_learner')
+              .setLabel('Scale 1–10: How much of a Fast Learner are you?')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setMaxLength(2)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('intake_invest')
+              .setLabel('Willing to invest in learning? (Minimum $150)')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setMaxLength(20)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('intake_referred')
+              .setLabel('Referred by? (optional)')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+              .setMaxLength(100)
+          ),
         );
 
-        // Close ticket button
-        const closeRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`close_ticket_${member.user.id}`)
-            .setLabel('Close Ticket')
-            .setStyle(ButtonStyle.Secondary),
-        );
-
-        await thread.send({
-          content: `<@${member.user.id}> — a staff member will be with you shortly.`,
-        });
-
-        const staffEmbed = new EmbedBuilder()
-          .setColor(0x111111)
-          .setDescription(
-            `**<@${member.user.id}>** is requesting access.\n\nAssign their role below.`
-          );
-
-        await thread.send({ embeds: [staffEmbed], components: [assignRow] });
-        await thread.send({ components: [closeRow] });
-
-        return interaction.editReply({ content: `Ticket opened: ${thread}` });
+        return interaction.showModal(modal);
       }
 
       // ── Assign volume role ──
