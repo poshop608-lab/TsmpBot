@@ -3316,29 +3316,32 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.customId === 'access_intake_modal') {
         await interaction.deferReply({ ephemeral: true });
 
+        const iGuild  = interaction.guild;
+        const iMember = interaction.member;
+
         const journey  = interaction.fields.getTextInputValue('intake_journey').trim();
         const learner  = interaction.fields.getTextInputValue('intake_learner').trim();
         const invest   = interaction.fields.getTextInputValue('intake_invest').trim();
         const referred = interaction.fields.getTextInputValue('intake_referred')?.trim() || '—';
 
-        const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
+        const ticketsCh = iGuild.channels.cache.get(TICKETS_CH_ID);
         if (!ticketsCh) return interaction.editReply({ content: 'Tickets channel not found.' });
 
         const existing = ticketsCh.threads.cache.find(
-          t => t.name === `ticket-${member.user.username}` && !t.archived
+          t => t.name === `ticket-${iMember.user.username}` && !t.archived
         );
         if (existing) return interaction.editReply({ content: `You already have an open ticket: ${existing}` });
 
         const thread = await ticketsCh.threads.create({
-          name: `ticket-${member.user.username}`,
+          name: `ticket-${iMember.user.username}`,
           autoArchiveDuration: 1440,
           type: 12,
           invitable: false,
-          reason: `Access request from ${member.user.tag}`,
+          reason: `Access request from ${iMember.user.tag}`,
         });
 
-        await thread.members.add(member.user.id);
-        const allMembers = await guild.members.fetch();
+        await thread.members.add(iMember.user.id);
+        const allMembers = await iGuild.members.fetch();
         for (const m of allMembers.values()) {
           if (m.user.bot) continue;
           if (STAFF_ROLE_IDS.some(id => m.roles.cache.has(id))) {
@@ -3346,11 +3349,11 @@ client.on(Events.InteractionCreate, async interaction => {
           }
         }
 
-        await thread.send({ content: `<@${member.user.id}> — a staff member will be with you shortly.` });
+        await thread.send({ content: `<@${iMember.user.id}> — a staff member will be with you shortly.` });
 
         const intakeEmbed = new EmbedBuilder()
           .setColor(0x111111)
-          .setTitle(`📋  Application — ${member.user.username}`)
+          .setTitle(`📋  Application — ${iMember.user.username}`)
           .addFields(
             { name: 'Trading Journey & Struggles', value: journey },
             { name: 'Fast Learner (1–10)', value: learner, inline: true },
@@ -3360,12 +3363,12 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: 'The Smart Money Paradigm  ·  Staff only' });
 
         const assignRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`assign_vol1_${member.user.id}`).setLabel('Volume I').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`assign_vol2_${member.user.id}`).setLabel('Volume II').setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId(`assign_vol3_${member.user.id}`).setLabel('Volume III').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId(`assign_vol1_${iMember.user.id}`).setLabel('Volume I').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`assign_vol2_${iMember.user.id}`).setLabel('Volume II').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`assign_vol3_${iMember.user.id}`).setLabel('Volume III').setStyle(ButtonStyle.Danger),
         );
         const closeRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`close_ticket_${member.user.id}`).setLabel('Close Ticket').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId(`close_ticket_${iMember.user.id}`).setLabel('Close Ticket').setStyle(ButtonStyle.Secondary),
         );
 
         await thread.send({ embeds: [intakeEmbed], components: [assignRow] });
