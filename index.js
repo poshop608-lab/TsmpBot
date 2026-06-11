@@ -3662,6 +3662,25 @@ client.on(Events.InteractionCreate, async interaction => {
           `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>. Welcome.`
         );
 
+        // Post welcome card now that member is approved
+        try {
+          const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
+          if (welcomeCh) {
+            const cardBuffer = await buildWelcomeCard(targetMember, guild.memberCount);
+            const attachment = new AttachmentBuilder(cardBuffer, { name: 'welcome.png' });
+            const welcomeEmbed = new EmbedBuilder()
+              .setColor(0x0a0a0a)
+              .setDescription(
+                `## Welcome, <@${targetUserId}>\n\n` +
+                `*Not everyone who enters leaves the same.*\n\n` +
+                `You've been granted **${volKey}** access. The server is yours.`
+              )
+              .setImage('attachment://welcome.png')
+              .setFooter({ text: 'The Smart Money Paradigm  ·  The market is engineered. Learn the engineering.' });
+            await welcomeCh.send({ embeds: [welcomeEmbed], files: [attachment] });
+          }
+        } catch (e) { console.warn('Welcome card error:', e.message); }
+
         await interaction.editReply({ content: `Done. ${volKey} assigned.` });
         setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
       }
@@ -3712,35 +3731,10 @@ client.on(Events.MessageCreate, async message => {
 
 // ── Auto-assign Pending + welcome on join ──
 client.on(Events.GuildMemberAdd, async member => {
-  const { guild } = member;
-
   try {
     await member.roles.add(PENDING_ROLE_ID);
   } catch (e) {
     console.warn('Pending role error:', e.message);
-  }
-
-  try {
-    const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
-    if (!welcomeCh) return;
-
-    const cardBuffer = await buildWelcomeCard(member, guild.memberCount);
-    const attachment = new AttachmentBuilder(cardBuffer, { name: 'welcome.png' });
-
-    const welcomeEmbed = new EmbedBuilder()
-      .setColor(0x0a0a0a)
-      .setDescription(
-        `## Welcome, <@${member.user.id}>\n\n` +
-        `*Not everyone who enters leaves the same.*\n\n` +
-        `Head to <#${ROLES_CH_ID}> and request access to unlock the server.`
-      )
-      .setImage('attachment://welcome.png')
-      .setFooter({ text: 'The Smart Money Paradigm  ·  The market is engineered. Learn the engineering.' });
-
-    await welcomeCh.send({ embeds: [welcomeEmbed], files: [attachment] });
-
-  } catch (e) {
-    console.error('Welcome error:', e.message);
   }
 });
 
