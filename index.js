@@ -3649,7 +3649,7 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('intake_journey')
-              .setLabel('Describe your Trading Journey and struggles')
+              .setLabel('Your trading journey & biggest struggle')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
               .setMaxLength(500)
@@ -3657,7 +3657,7 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('intake_learner')
-              .setLabel('Scale 1–10: How much of a Fast Learner are you?')
+              .setLabel('Scale 1-10: How fast of a learner are you?')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
               .setMaxLength(2)
@@ -3665,7 +3665,7 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('intake_invest')
-              .setLabel('Willing to invest in learning? (Minimum $150)')
+              .setLabel('Willing to invest in learning? (Min $150)')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
               .setMaxLength(20)
