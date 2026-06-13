@@ -140,33 +140,50 @@ async function getPineLines() {
   return data;
 }
 
-// ── Get study values via data window ─────────────────────────────────────────
+// ── Get study values via data window items (title → value) ───────────────────
 async function getStudyValues() {
   const data = await evaluate(`
     (function() {
       try {
         var chart   = window.TradingViewApi._activeChartWidgetWV.value()._chartWidget;
         var sources = chart.model().model().dataSources();
-        var result  = {};
         for (var i = 0; i < sources.length; i++) {
           var s = sources[i];
           if (!s.metaInfo) continue;
-          var meta = s.metaInfo();
-          var name = meta.description || meta.shortDescription || '';
+          var name = s.metaInfo().description || s.metaInfo().shortDescription || '';
           if (name.indexOf('TSMP Sweep') === -1) continue;
-          // Try _currentStudyData
-          var sd = s._currentStudyData;
-          if (sd && sd.studyData && sd.studyData.data) {
-            var d = sd.studyData.data;
-            var last = d[d.length - 1];
-            if (last && meta.plots) {
-              meta.plots.forEach(function(p, idx) {
-                if (last[idx + 1] != null) result[p.id] = last[idx + 1];
-              });
+
+          var result = {};
+
+          // Method 1: data window view items (title/value pairs) — most reliable
+          if (s._dataWindowView && s._dataWindowView._items) {
+            var items = s._dataWindowView._items;
+            items.forEach(function(item) {
+              if (item._title && item._value != null) {
+                var v = parseFloat(String(item._value).replace(/,/g, ''));
+                if (!isNaN(v)) result[item._title] = v;
+              }
+            });
+            if (Object.keys(result).length > 0) return result;
+          }
+
+          // Method 2: _lastNonEmptyPlotRowCache — raw value array
+          if (s._lastNonEmptyPlotRowCache) {
+            var cache = s._lastNonEmptyPlotRowCache;
+            var key = Object.keys(cache)[0];
+            if (key && cache[key] && cache[key].value) {
+              var vals = cache[key].value;
+              var meta = s.metaInfo();
+              if (meta.plots) {
+                meta.plots.forEach(function(p, idx) {
+                  if (vals[idx + 1] != null) result[p.id] = vals[idx + 1];
+                });
+              }
+              if (Object.keys(result).length > 0) return result;
             }
           }
         }
-        return result;
+        return null;
       } catch(e) { return null; }
     })()`);
   return data;
@@ -300,19 +317,14 @@ async function poll() {
   if (!q || !q.high || !q.low) return;
   const { high, low, close } = q;
 
-  // Get levels from Pine indicator — try study values first
-  let levels = {};
+  // Get levels from Pine indicator data window (title → value)
   const sv = await getStudyValues();
-  if (sv && Object.keys(sv).length > 0) {
-    // Map by plot index order
-    const keys = Object.keys(sv);
-    keys.forEach((k, i) => { if (PLOT_ORDER[i]) levels[PLOT_ORDER[i]] = sv[k]; });
-  }
-
-  if (Object.keys(levels).length === 0) {
+  if (!sv || Object.keys(sv).length === 0) {
     console.warn('[sweep] No levels from indicator — is TSMP Sweep Alerts on chart?');
     return;
   }
+  // sv keys are plot titles: PDH, PDL, PWH, PWL, etc. — use directly
+  const levels = sv;
 
   // Determine current session
   const curSess = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
@@ -327,7 +339,7 @@ async function poll() {
     const sessMap = { ASH: 'asia', ASL: 'asia', LOH: 'london', LOL: 'london', NYAH: 'nyam', NYAL: 'nyam', NYPH: 'nypm', NYPL: 'nypm' };
     if (sessMap[key] && sessMap[key] === curSess) continue;
 
-    const isHigh = key.endsWith('H') || key === 'PDH' || key === 'PWH' || key === 'PMH';
+    const isHigh = ['PDH','PWH','PMH','PreMH','ASH','LOH','NYAH','NYPH'].includes(key);
     if (isHigh && high > lvlPrice) {
       _swept[key] = true;
       toFire.push({ level: key, direction: 'above', price: lvlPrice });
