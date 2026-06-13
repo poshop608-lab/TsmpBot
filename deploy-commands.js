@@ -174,10 +174,6 @@ const commands = [
     .setDescription('Fire test sweep alert embeds to the sweep channel (staff only)'),
 
   new SlashCommandBuilder()
-    .setName('test-local-sweep')
-    .setDescription('Take a 15m chart screenshot via local TV and post to sweep channel (staff only)'),
-
-  new SlashCommandBuilder()
     .setName('setup-vc-alerts')
     .setDescription('Create VC Alerts role, vc-schedule channel, and self-assign button (staff only)'),
 

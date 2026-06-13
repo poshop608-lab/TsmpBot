@@ -2857,13 +2857,6 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      if (commandName === 'test-local-sweep') {
-        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
-        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
-        _screenshotPending = true;
-        return interaction.reply({ content: '📸 Screenshot requested — local sweep monitor will capture and post to <#' + SWEEP_ALERT_CH_ID + '> within a few seconds.', ephemeral: true });
-      }
-
       if (commandName === 'test-sweep') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -3856,9 +3849,6 @@ client.once(Events.ClientReady, () => {
 const app = express();
 app.use(express.json());
 
-// Screenshot-test flag: set by slash command, polled + cleared by local script
-let _screenshotPending = false;
-
 app.post('/levels', (req, res) => {
   const { secret, ...levels } = req.body;
   if (secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
@@ -3927,142 +3917,6 @@ app.post('/sweep', async (req, res) => {
     console.error('Sweep webhook error:', e.message);
     res.status(500).json({ error: e.message });
   }
-});
-
-// Local sweep alert — multipart/form-data with optional screenshot
-function readRawBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on('data', c => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
-
-function parseMultipart(rawBuf, ct) {
-  const boundaryMatch = ct.match(/boundary=(.+)$/);
-  if (!boundaryMatch) return null;
-  const boundary = '--' + boundaryMatch[1].trim();
-  const body = rawBuf.toString('latin1');
-  const parts = body.split(boundary).slice(1, -1);
-  const fields = {};
-  let screenshotBuf = null;
-  for (const part of parts) {
-    const [headerSection, ...rest] = part.split('\r\n\r\n');
-    const content = rest.join('\r\n\r\n').replace(/\r\n$/, '');
-    const nameMatch = headerSection.match(/name="([^"]+)"/);
-    const fileMatch = headerSection.match(/filename="([^"]+)"/);
-    if (!nameMatch) continue;
-    if (fileMatch) screenshotBuf = Buffer.from(content, 'latin1');
-    else fields[nameMatch[1]] = content;
-  }
-  return { fields, screenshotBuf };
-}
-
-app.post('/sweep-local', async (req, res) => {
-  try {
-    const ct = req.headers['content-type'] || '';
-    const rawBuf = await readRawBody(req);
-    const parsed = parseMultipart(rawBuf, ct);
-    if (!parsed) return res.status(400).json({ error: 'no boundary' });
-    const { fields, screenshotBuf } = parsed;
-    const { secret, level, direction, price } = fields;
-    if (secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
-    if (!level || !direction) return res.status(400).json({ error: 'missing fields' });
-    if (!SWEEP_ALERT_CH_ID) return res.status(503).json({ error: 'sweep alerts not configured' });
-
-    const guild = client.guilds.cache.first();
-    if (!guild) return res.status(503).json({ error: 'bot not ready' });
-    const ch = guild.channels.cache.get(SWEEP_ALERT_CH_ID);
-    if (!ch) return res.status(503).json({ error: 'alert channel not found' });
-
-    const levelKey = level.toUpperCase();
-    const labelName = LEVEL_LABELS[levelKey] || levelKey;
-    const isAbove = direction === 'above';
-    const priceVal = price ? parseFloat(price) : null;
-    const priceStr = priceVal ? priceVal.toFixed(2) : null;
-
-    const hm = _nyHM();
-    const SESSION_LABELS_MAP = { asia: 'Asia (18:00–00:00)', london: 'London (00:00–07:00)', nyam: 'NY Morning (07:00–11:30)', nypm: 'NY Afternoon (11:30–16:00)' };
-    const curSess  = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
-    const sessLabel = SESSION_LABELS_MAP[curSess] || '—';
-    const nyTime    = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
-
-    const color   = isAbove ? 0x22d3ee : 0xf87171;
-    const arrow   = isAbove ? '🔺' : '🔻';
-    const dirWord = isAbove ? 'Swept **Above**' : 'Swept **Below**';
-
-    const desc = [
-      `${arrow} **${labelName}** — ${isAbove ? 'swept **above**' : 'swept **below**'}${priceStr ? ` at \`${priceStr}\`` : ''}`,
-      ``,
-      `> 💰 **Current Price** — ${priceStr ? `\`${priceStr}\`` : '—'}`,
-      `> 🕐 **Session** — ${sessLabel}`,
-      `> 🗓️ **Time** — ${nyTime} ET`,
-    ].join('\n');
-
-    const embed = new EmbedBuilder()
-      .setColor(color)
-      .setTitle(`${arrow}  NQ — **${labelName}** ${dirWord}`)
-      .setDescription(desc)
-      .setTimestamp()
-      .setFooter({ text: 'The Smart Money Paradigm  ·  NQ Sweep Alert  ·  Real-time' });
-
-    const rolePings = SWEEP_TC_ROLE_ID ? [`<@&${SWEEP_TC_ROLE_ID}>`] : [];
-    const files = screenshotBuf ? [new AttachmentBuilder(screenshotBuf, { name: 'chart.png' })] : [];
-    if (files.length) embed.setImage('attachment://chart.png');
-
-    await ch.send({ content: rolePings.join(' ') || undefined, embeds: [embed], files });
-    console.log(`[local sweep] ${levelKey} ${direction} @ ${priceStr} | screenshot: ${screenshotBuf ? screenshotBuf.length + 'b' : 'none'}`);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[sweep-local] error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Local script posts 15m chart screenshot here for test-local-sweep command
-app.post('/screenshot-test', async (req, res) => {
-  try {
-    const ct = req.headers['content-type'] || '';
-    const rawBuf = await readRawBody(req);
-    const parsed = parseMultipart(rawBuf, ct);
-    if (!parsed) return res.status(400).json({ error: 'no boundary' });
-    const { fields, screenshotBuf } = parsed;
-    if (fields.secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
-    if (!SWEEP_ALERT_CH_ID) return res.status(503).json({ error: 'sweep alerts not configured' });
-    const guild = client.guilds.cache.first();
-    const ch = guild?.channels.cache.get(SWEEP_ALERT_CH_ID);
-    if (!ch) return res.status(503).json({ error: 'channel not found' });
-
-    const nyTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
-    const embed = new EmbedBuilder()
-      .setColor(0x22d3ee)
-      .setTitle('📸  NQ — 15m Chart Snapshot')
-      .setDescription(`> 🕐 **Time** — ${nyTime} ET\n> 📡 **Source** — Local TradingView Desktop`)
-      .setImage('attachment://chart.png')
-      .setTimestamp()
-      .setFooter({ text: 'The Smart Money Paradigm  ·  Staff Test' });
-    const files = screenshotBuf ? [new AttachmentBuilder(screenshotBuf, { name: 'chart.png' })] : [];
-    await ch.send({ embeds: [embed], files });
-    console.log('[screenshot-test] Posted to sweep channel');
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[screenshot-test] error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Local script polls this to check if a screenshot was requested
-app.get('/screenshot-pending', (req, res) => {
-  if (req.query.secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
-  res.json({ pending: _screenshotPending });
-});
-
-// Local script calls this to clear the flag after taking screenshot
-app.post('/screenshot-clear', (req, res) => {
-  if (req.body?.secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
-  _screenshotPending = false;
-  res.json({ ok: true });
 });
 
 app.get('/health', (_, res) => res.json({ ok: true, bot: client.user?.tag || 'starting' }));
