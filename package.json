@@ -10,12 +10,14 @@
     "@fontsource/inter": "^5.2.8",
     "@fontsource/plus-jakarta-sans": "^5.2.8",
     "@napi-rs/canvas": "^1.0.0",
-    "chrome-remote-interface": "^0.34.0",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "fast-xml-parser": "^5.8.0",
-    "form-data": "^4.0.6",
     "gif-encoder-2": "^1.0.5"
+  },
+  "localDependencies": {
+    "chrome-remote-interface": "^0.34.0",
+    "form-data": "^4.0.6"
   }
 }

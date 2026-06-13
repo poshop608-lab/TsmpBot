@@ -404,6 +404,7 @@ async function checkScreenshotPending() {
         res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
       }).on('error', reject).on('timeout', () => reject(new Error('timeout')));
     });
+    console.log('[screenshot poll]', JSON.stringify(data));
     if (!data?.pending) return;
 
     console.log('[screenshot] Test screenshot requested — capturing 15m chart...');
