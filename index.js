@@ -3930,32 +3930,42 @@ app.post('/sweep', async (req, res) => {
 });
 
 // Local sweep alert — multipart/form-data with optional screenshot
-app.post('/sweep-local', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function parseMultipart(rawBuf, ct) {
+  const boundaryMatch = ct.match(/boundary=(.+)$/);
+  if (!boundaryMatch) return null;
+  const boundary = '--' + boundaryMatch[1].trim();
+  const body = rawBuf.toString('latin1');
+  const parts = body.split(boundary).slice(1, -1);
+  const fields = {};
+  let screenshotBuf = null;
+  for (const part of parts) {
+    const [headerSection, ...rest] = part.split('\r\n\r\n');
+    const content = rest.join('\r\n\r\n').replace(/\r\n$/, '');
+    const nameMatch = headerSection.match(/name="([^"]+)"/);
+    const fileMatch = headerSection.match(/filename="([^"]+)"/);
+    if (!nameMatch) continue;
+    if (fileMatch) screenshotBuf = Buffer.from(content, 'latin1');
+    else fields[nameMatch[1]] = content;
+  }
+  return { fields, screenshotBuf };
+}
+
+app.post('/sweep-local', async (req, res) => {
   try {
-    // Parse multipart manually using boundary
     const ct = req.headers['content-type'] || '';
-    const boundaryMatch = ct.match(/boundary=(.+)$/);
-    if (!boundaryMatch) return res.status(400).json({ error: 'no boundary' });
-
-    const boundary = '--' + boundaryMatch[1];
-    const body = req.body.toString('latin1');
-    const parts = body.split(boundary).slice(1, -1);
-    const fields = {};
-    let screenshotBuf = null;
-
-    for (const part of parts) {
-      const [headerSection, ...rest] = part.split('\r\n\r\n');
-      const content = rest.join('\r\n\r\n').replace(/\r\n$/, '');
-      const nameMatch = headerSection.match(/name="([^"]+)"/);
-      const fileMatch = headerSection.match(/filename="([^"]+)"/);
-      if (!nameMatch) continue;
-      if (fileMatch) {
-        screenshotBuf = Buffer.from(content, 'latin1');
-      } else {
-        fields[nameMatch[1]] = content;
-      }
-    }
-
+    const rawBuf = await readRawBody(req);
+    const parsed = parseMultipart(rawBuf, ct);
+    if (!parsed) return res.status(400).json({ error: 'no boundary' });
+    const { fields, screenshotBuf } = parsed;
     const { secret, level, direction, price } = fields;
     if (secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
     if (!level || !direction) return res.status(400).json({ error: 'missing fields' });
@@ -4011,25 +4021,13 @@ app.post('/sweep-local', express.raw({ type: '*/*', limit: '10mb' }), async (req
 });
 
 // Local script posts 15m chart screenshot here for test-local-sweep command
-app.post('/screenshot-test', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+app.post('/screenshot-test', async (req, res) => {
   try {
     const ct = req.headers['content-type'] || '';
-    const boundaryMatch = ct.match(/boundary=(.+)$/);
-    if (!boundaryMatch) return res.status(400).json({ error: 'no boundary' });
-    const boundary = '--' + boundaryMatch[1];
-    const body = req.body.toString('latin1');
-    const parts = body.split(boundary).slice(1, -1);
-    const fields = {};
-    let screenshotBuf = null;
-    for (const part of parts) {
-      const [headerSection, ...rest] = part.split('\r\n\r\n');
-      const content = rest.join('\r\n\r\n').replace(/\r\n$/, '');
-      const nameMatch = headerSection.match(/name="([^"]+)"/);
-      const fileMatch = headerSection.match(/filename="([^"]+)"/);
-      if (!nameMatch) continue;
-      if (fileMatch) screenshotBuf = Buffer.from(content, 'latin1');
-      else fields[nameMatch[1]] = content;
-    }
+    const rawBuf = await readRawBody(req);
+    const parsed = parseMultipart(rawBuf, ct);
+    if (!parsed) return res.status(400).json({ error: 'no boundary' });
+    const { fields, screenshotBuf } = parsed;
     if (fields.secret !== SWEEP_WEBHOOK_SECRET) return res.status(403).json({ error: 'forbidden' });
     if (!SWEEP_ALERT_CH_ID) return res.status(503).json({ error: 'sweep alerts not configured' });
     const guild = client.guilds.cache.first();
