@@ -819,15 +819,23 @@ async function _fetchInvesting(week) {
 }
 
 async function fetchAllUSDEvents(week = 'thisweek') {
-  // 1. Read from file cache (populated by GitHub Action or previous successful fetch)
+  // 1. Read from file cache — only if events fall within the correct week
   try {
     const filePath = path.join(__dirname, 'data', `ff_${week}.json`);
     const raw = fs.readFileSync(filePath, 'utf8').trim();
     if (raw && raw !== '[]') {
       const j = JSON.parse(raw);
       if (Array.isArray(j) && j.length > 0) {
-        console.log(`Calendar loaded from file (${week}): ${j.length} events`);
-        return j;
+        const { from, to } = _weekDateRange(week);
+        const hasMatchingDate = j.some(e => {
+          const d = (e.date || e.fullDate || '').slice(0, 10);
+          return d >= from && d <= to;
+        });
+        if (hasMatchingDate) {
+          console.log(`Calendar loaded from file (${week}): ${j.length} events`);
+          return j;
+        }
+        console.warn(`File cache (${week}) is stale — dates don't match ${from}–${to}, re-fetching`);
       }
     }
   } catch {}
