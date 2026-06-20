@@ -1085,7 +1085,8 @@ async function buildEnvCalendarCard(events) {
   const DAY_KEYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
   const byDay = { Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [] };
   for (const e of events) {
-    const d = new Date(e.date);
+    const dateStr = (e.date || '').slice(0, 10);
+    const d = new Date(dateStr + 'T12:00:00Z'); // noon UTC avoids ET midnight boundary shift
     const dow = d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
     if (byDay[dow]) byDay[dow].push(e);
   }
@@ -2937,14 +2938,14 @@ client.on(Events.InteractionCreate, async interaction => {
         const weekData = buildEnvEngineWeek(allEvents);
         _envWeekCache = { ts: Date.now(), allEvents, weekData };
 
-        // DEBUG — dump raw events and week slot dates
-        const debugLines = [];
-        debugLines.push(`**Raw events (${allEvents.length}):**`);
-        for (const e of allEvents) debugLines.push(`\`${e.date} ${e.time||'??:??'}\` ${e.title||e.name} [${e.impact}]`);
-        debugLines.push(`\n**Week slots:**`);
-        for (const wd of weekData.byDay) debugLines.push(`\`${wd.date}\` → ${wd.events.length} event(s): ${wd.events.map(e=>e.title||e.name).join(', ')||'none'}`);
-        await interaction.editReply({ content: debugLines.join('\n').slice(0, 1990) });
-        return;
+        const cardBuffer = await buildEnvEngineCard(allEvents);
+        const attachment = new AttachmentBuilder(cardBuffer, { name: 'env-engine-test.png' });
+
+        await interaction.editReply({
+          content: `**Environment Selection preview — ${week}**\nSession ratings based on USD events and market context. Click a day for the full breakdown.`,
+          files: [attachment],
+          components: [buildDayButtons()],
+        });
       }
 
       if (commandName === 'test-sweep') {
