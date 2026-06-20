@@ -238,7 +238,7 @@ async function buildWelcomeCard(member, memberCount) {
 // ── Env Calendar ──
 async function fetchUSDEvents(week = 'thisweek') {
   const all = await fetchAllUSDEvents(week);
-  return all.filter(e => (e.country || e.currency || '') === 'USD' && (e.impact === 'High' || e.impact === 'Medium'));
+  return all.filter(e => (e.currency === 'USD' || e.country === 'US') && (e.impact === 'High' || e.impact === 'Medium'));
 }
 
 // ── Environment Engine (ported from TradoArc) ──
@@ -2738,7 +2738,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const events = await fetchUSDEvents(week);
 
         if (events.length === 0) {
-          return interaction.editReply({ content: `No USD high/medium events found for **${week}** — FF may not have published it yet.` });
+          return interaction.editReply({ content: `No USD high/medium events found for **${week}** — TradingView may not have data yet — try again in a moment.` });
         }
 
         const cardBuffer = await buildEnvCalendarCard(events);
@@ -2870,7 +2870,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const allEvents = await fetchAllUSDEvents(week);
 
         if (allEvents.length === 0) {
-          return interaction.editReply({ content: `No events found for **${week}** — FF may not have published it yet.` });
+          return interaction.editReply({ content: `No events found for **${week}** — TradingView may not have data yet — try again in a moment.` });
         }
 
         const weekData = buildEnvEngineWeek(allEvents);
