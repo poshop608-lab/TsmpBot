@@ -2292,7 +2292,7 @@ function _tickSessionHL(high, low) {
 }
 
 // ── Macro News Feed ──
-const MACRO_NEWS_CH_ID = '1487871136875286538';
+const MACRO_NEWS_CH_ID = '1517995855959949513'; // #macro-news (ex-newsfeed, FJ + RSS both post here)
 const MACRO_POLL_MS = 5 * 60 * 1000; // every 5 min
 const seenGuids = new Set();
 let _newsBootTime = null; // set on first poll — skip articles older than 30min at startup
@@ -3765,23 +3765,7 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ── Text prefix commands ──
-const FJ_SOURCE_CH_ID  = '1517995855959949513'; // #newsfeed — FJ NewsBot posts here
-const FJ_TARGET_CH_ID  = '1487871136875286538'; // #macro-news — repost destination
-
 client.on(Events.MessageCreate, async message => {
-  // Relay FJ NewsBot messages from #newsfeed → #macro-news
-  if (message.channel.id === FJ_SOURCE_CH_ID && message.author.bot) {
-    const target = message.guild?.channels.cache.get(FJ_TARGET_CH_ID);
-    if (!target) return;
-    const opts = {};
-    if (message.embeds.length)   opts.embeds  = message.embeds;
-    if (message.content)         opts.content  = message.content;
-    if (message.attachments.size) opts.files   = [...message.attachments.values()].map(a => a.url);
-    if (!opts.embeds && !opts.content && !opts.files) return;
-    await target.send(opts).catch(() => {});
-    return;
-  }
-
   if (message.author.bot) return;
   if (!message.content.startsWith('!')) return;
 
