@@ -2328,7 +2328,7 @@ function _tickSessionHL(high, low) {
 }
 
 // ── Macro News Feed ──
-const MACRO_NEWS_CH_ID = '1517995855959949513'; // #macro-news (ex-newsfeed, FJ + RSS both post here)
+const MACRO_NEWS_CH_ID = '1518008500679082055'; // #macro-news
 const MACRO_POLL_MS = 5 * 60 * 1000; // every 5 min
 const seenGuids = new Set();
 let _newsBootTime = null; // set on first poll — skip articles older than 30min at startup
@@ -3801,35 +3801,7 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ── Text prefix commands ──
-const FJ_BOT_ID       = '1517994617583308900'; // FJ NewsBot V2
-const FJ_TARGET_CH_ID = '1517995855959949513'; // #macro-news
-
-// Auto-delete any channel FJ NewsBot creates the moment it appears
-const FJ_CHANNEL_NAMES = ['newsfeed', 'news-feed', 'fj-news', 'financial-juice'];
-client.on(Events.ChannelCreate, async channel => {
-  if (!FJ_CHANNEL_NAMES.includes(channel.name?.toLowerCase())) return;
-  // Check if FJ bot has perms in it (it created it)
-  await channel.delete('FJ NewsBot auto-created channel — relaying to #macro-news').catch(() => {});
-  console.log(`[FJ] Auto-deleted channel: ${channel.name}`);
-});
-
 client.on(Events.MessageCreate, async message => {
-  // Relay anything FJ NewsBot posts (regardless of which channel it creates) → #macro-news
-  if (message.author.id === FJ_BOT_ID && message.channel.id !== FJ_TARGET_CH_ID) {
-    const target = message.guild?.channels.cache.get(FJ_TARGET_CH_ID);
-    if (target) {
-      const opts = {};
-      if (message.embeds.length)    opts.embeds  = message.embeds;
-      if (message.content)          opts.content  = message.content;
-      if (message.attachments.size) opts.files    = [...message.attachments.values()].map(a => a.url);
-      if (opts.embeds || opts.content || opts.files) await target.send(opts).catch(() => {});
-    }
-    // Delete FJ's channel after relaying
-    if (message.channel.id !== FJ_TARGET_CH_ID) {
-      message.channel.delete('FJ NewsBot channel — content relayed to #macro-news').catch(() => {});
-    }
-    return;
-  }
 
   if (message.author.bot) return;
   if (!message.content.startsWith('!')) return;
