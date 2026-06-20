@@ -2097,6 +2097,12 @@ async function _seedSweptFromCurrentPrice() {
 async function _pollNQSweeps() {
   if (!SWEEP_ALERT_CH_ID) return;
   if (!SWEEP_TC_ROLE_ID) return;
+  // Futures close Friday ~5PM ET, reopen Sunday ~6PM ET — skip Sat + Sun before 6PM ET
+  const nyNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dow = nyNow.getDay(); // 0=Sun, 6=Sat
+  const hm  = nyNow.getHours() * 60 + nyNow.getMinutes();
+  if (dow === 6) return; // all day Saturday
+  if (dow === 0 && hm < 18 * 60) return; // Sunday before 6PM ET
 
   if (!_nqLevels.pdh || !_nqLevels.pdl) {
     await _refreshNQLevels().catch(e => console.warn('level retry failed:', e?.message));
