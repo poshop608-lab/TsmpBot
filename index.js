@@ -303,11 +303,11 @@ function _envTier(name) {
 
 function _envDayType(events) {
   const usd = events.filter(e => {
-    if ((e.country || e.currency || '').toUpperCase() !== 'USD') return false;
-    if ((e.impact || '') === 'L' || (e.impact || '') === 'Low') return false;
+    if (e.currency !== 'USD' && e.country !== 'US' && (e.country || e.currency || '').toUpperCase() !== 'USD') return false;
     const n = (e.title || e.name || '').toLowerCase();
     if (ENV_EXCLUDE.some(x => n.includes(x))) return false;
-    return true;
+    // Use tier system — ignore TV's unreliable impact field
+    return _envTier(e.title || e.name || '') <= 3;
   });
   const t1 = usd.filter(e => _envTier(e.title || e.name || '') === 1);
   const t2 = usd.filter(e => _envTier(e.title || e.name || '') === 2);
@@ -967,10 +967,10 @@ async function getEnvWeekData() {
   const dow = new Date().getDay(); // 0=Sun
   let allEvents;
   if (dow === 0) {
-    allEvents = await fetchAllUSDEvents('nextweek');
-    if (!allEvents.length) allEvents = await fetchAllUSDEvents('thisweek');
+    allEvents = await fetchUSDEvents('nextweek');
+    if (!allEvents.length) allEvents = await fetchUSDEvents('thisweek');
   } else {
-    allEvents = await fetchAllUSDEvents('thisweek');
+    allEvents = await fetchUSDEvents('thisweek');
   }
 
   const weekData = buildEnvEngineWeek(allEvents);
@@ -1288,7 +1288,7 @@ async function postEnvEngine(guild, { ping = true, week = 'thisweek' } = {}) {
   const ch = guild.channels.cache.get(ENV_ENGINE_CH_ID);
   if (!ch) return;
 
-  const allEvents = await fetchAllUSDEvents(week);
+  const allEvents = await fetchUSDEvents(week);
   if (allEvents.length === 0) return;
 
   // Cache for button clicks
@@ -2922,7 +2922,7 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.deferReply({ ephemeral: true });
 
         const week = interaction.options.getString('week') || 'thisweek';
-        const allEvents = await fetchAllUSDEvents(week);
+        const allEvents = await fetchUSDEvents(week);
 
         if (allEvents.length === 0) {
           return interaction.editReply({ content: `No events found for **${week}** — TradingView may not have data yet — try again in a moment.` });
