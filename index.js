@@ -2813,7 +2813,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (!ENV_CH_ID) return interaction.editReply({ content: 'Run `/setup-economic-calendar` first to create the channel.' });
 
-        const week = interaction.options.getString('week') || 'thisweek';
+        const _dow2 = new Date().getDay();
+        const _defWeek = (_dow2 === 0 || _dow2 === 6) ? 'nextweek' : 'thisweek';
+        const week = interaction.options.getString('week') || _defWeek;
         await postEnvEngine(guild, { week });
         return interaction.editReply({ content: 'Environment Engine posted.' });
       }
@@ -2922,7 +2924,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        const week = interaction.options.getString('week') || 'thisweek';
+        const _dow = new Date().getDay();
+        const _defaultWeek = (_dow === 0 || _dow === 6) ? 'nextweek' : 'thisweek';
+        const week = interaction.options.getString('week') || _defaultWeek;
         const allEvents = await fetchUSDEvents(week);
 
         if (allEvents.length === 0) {
