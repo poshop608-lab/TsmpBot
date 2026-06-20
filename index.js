@@ -3765,7 +3765,31 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ── Text prefix commands ──
+const FJ_BOT_ID       = '1517994617583308900'; // FJ NewsBot V2
+const FJ_TARGET_CH_ID = '1517995855959949513'; // #macro-news
+
 client.on(Events.MessageCreate, async message => {
+  // Relay anything FJ NewsBot posts (regardless of which channel it creates) → #macro-news
+  if (message.author.id === FJ_BOT_ID && message.channel.id !== FJ_TARGET_CH_ID) {
+    const target = message.guild?.channels.cache.get(FJ_TARGET_CH_ID);
+    if (target) {
+      const opts = {};
+      if (message.embeds.length)    opts.embeds  = message.embeds;
+      if (message.content)          opts.content  = message.content;
+      if (message.attachments.size) opts.files    = [...message.attachments.values()].map(a => a.url);
+      if (opts.embeds || opts.content || opts.files) await target.send(opts).catch(() => {});
+    }
+    // Hide FJ's auto-created channel from everyone if not already done
+    const fjCh = message.channel;
+    const alreadyHidden = fjCh.permissionOverwrites?.cache.get('1469213835666657362')?.deny.has('ViewChannel');
+    if (!alreadyHidden) {
+      fjCh.permissionOverwrites.edit('1469213835666657362', { ViewChannel: false }).catch(() => {});
+      fjCh.permissionOverwrites.edit('1469222592312377374', { ViewChannel: true  }).catch(() => {}); // Founder
+      fjCh.permissionOverwrites.edit('1510284937159508061', { ViewChannel: true  }).catch(() => {}); // TsmpBot
+    }
+    return;
+  }
+
   if (message.author.bot) return;
   if (!message.content.startsWith('!')) return;
 
