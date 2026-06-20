@@ -236,28 +236,60 @@ async function buildWelcomeCard(member, memberCount) {
 }
 
 // ── Env Calendar ──
+// Canonical event titles — when TV returns multiple variants of the same release,
+// only the title matching these exact substrings is kept (first match wins per date+time group)
+const EVENT_CANONICAL = [
+  'core pce price index mom', 'core pce price index yoy',
+  'nonfarm payrolls', 'non-farm payrolls',
+  'unemployment rate',
+  'average hourly earnings mom',
+  'cpi mom', 'core cpi mom',
+  'gdp qoq', 'gdp annualized',
+  'initial jobless claims',
+  'durable goods orders mom',
+  'retail sales mom',
+  'ism manufacturing', 'ism services',
+  'flash manufacturing pmi', 'flash services pmi',
+  'personal spending mom', 'personal income mom',
+  'michigan consumer sentiment',
+  'jolts job openings',
+  'federal funds rate', 'fomc statement',
+];
+
 async function fetchUSDEvents(week = 'thisweek') {
   const all = await fetchAllUSDEvents(week);
-  // TV impact ratings are unreliable — reclassify using our tier system
-  // Include any USD event that is T1/T2/T3 (not excluded junk)
-  return all
+  // TV impact ratings unreliable — reclassify using TSMP tier system
+  const classified = all
     .filter(e => e.currency === 'USD' || e.country === 'US')
     .map(e => {
       const tier = _envTier(e.title || e.name || '');
       const n = (e.title || e.name || '').toLowerCase();
       const excluded = ENV_EXCLUDE.some(x => n.includes(x));
       if (excluded || tier > 3) return null;
-      return {
-        ...e,
-        impact: tier === 1 ? 'High' : 'Medium',
-      };
+      return { ...e, impact: tier === 1 ? 'High' : 'Medium', _tier: tier };
     })
     .filter(Boolean);
+
+  // Deduplicate — per date+time bucket, prefer canonical title; drop redundant variants
+  const buckets = {};
+  for (const e of classified) {
+    const key = (e.date || '').slice(0, 10) + '|' + (e.time || '') + '|' + e._tier;
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push(e);
+  }
+  const result = [];
+  for (const group of Object.values(buckets)) {
+    if (group.length === 1) { result.push(group[0]); continue; }
+    // Find canonical match
+    const canon = group.find(e => EVENT_CANONICAL.some(c => (e.title||'').toLowerCase().includes(c)));
+    result.push(canon || group[0]);
+  }
+  return result.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.time || '').localeCompare(b.time || ''));
 }
 
 // ── Environment Engine (ported from TradoArc) ──
 const ENV_TIER1 = ['federal funds rate','fomc statement','fomc minutes','fomc press conference','interest rate decision','non-farm','nonfarm','nfp','unemployment rate','average hourly earnings','cpi','consumer price index','core pce','pce price'];
-const ENV_TIER2 = ['ppi','producer price','retail sales','ism manufacturing','ism services','s&p global pmi','pmi','gdp','durable goods'];
+const ENV_TIER2 = ['ppi','producer price','retail sales','ism manufacturing','ism services','s&p global pmi','flash manufacturing pmi','flash services pmi','pmi','gdp','durable goods','new home sales','existing home sales','jolts'];
 const ENV_TIER3 = ['jobless claims','initial claims','continuing claims','jolts','consumer confidence','michigan sentiment','michigan consumer','michigan inflation','uom','personal income','personal spending','factory orders'];
 const ENV_EXCLUDE = ['nomination','member speaks','speaks','press briefing','testimony','auction','budget balance','statistical bulletin','business index','leading indicators','bank holiday','holiday','crude oil','natural gas','baker hughes','rig count','cftc','speculative positions','net positions','gasoline inventories','distillate','heating oil','commitment of traders','cushing','redbook','ibd/tipp','challenger','federal budget','beige book'];
 
