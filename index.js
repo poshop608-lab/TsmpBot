@@ -290,7 +290,7 @@ async function fetchUSDEvents(week = 'thisweek') {
 // ── Environment Engine (ported from TradoArc) ──
 const ENV_TIER1 = ['federal funds rate','fomc statement','fomc minutes','fomc press conference','interest rate decision','non-farm','nonfarm','nfp','unemployment rate','average hourly earnings','cpi','consumer price index','core pce','pce price'];
 const ENV_TIER2 = ['ppi','producer price','retail sales','ism manufacturing','ism services','s&p global pmi','flash manufacturing pmi','flash services pmi','pmi','gdp','durable goods','new home sales','existing home sales','jolts'];
-const ENV_TIER3 = ['jobless claims','initial claims','continuing claims','jolts','consumer confidence','michigan sentiment','michigan consumer','michigan inflation','uom','personal income','personal spending','factory orders'];
+const ENV_TIER3 = ['jobless claims','initial claims','continuing claims','unemployment claims','jolts','consumer confidence','michigan sentiment','michigan consumer','michigan inflation','uom','consumer sentiment','inflation expectations','personal income','personal spending','factory orders'];
 const ENV_EXCLUDE = ['nomination','member speaks','speaks','press briefing','testimony','auction','budget balance','statistical bulletin','business index','leading indicators','bank holiday','holiday','crude oil','natural gas','baker hughes','rig count','cftc','speculative positions','net positions','gasoline inventories','distillate','heating oil','commitment of traders','cushing','redbook','ibd/tipp','challenger','federal budget','beige book'];
 
 function _envTier(name) {
@@ -865,12 +865,41 @@ async function _fetchInvesting(week) {
   });
 }
 
+function _ffNormalize(e) {
+  // FF date field: "2026-06-25T08:30:00-04:00" — ET offset already applied
+  // Extract date (YYYY-MM-DD) and time (HH:MM) from the ISO string directly
+  const dateStr = (e.date || '').slice(0, 10);
+  const timeMatch = (e.date || '').match(/T(\d{2}:\d{2})/);
+  const time = timeMatch ? timeMatch[1] : '';
+  return {
+    title:    e.title,
+    name:     e.title,
+    date:     dateStr,
+    time:     time,
+    impact:   e.impact || 'Medium',
+    forecast: e.forecast || '',
+    previous: e.previous || '',
+    actual:   e.actual   || '',
+    country:  'US',
+    currency: 'USD',
+  };
+}
+
+async function _fetchFFCalendar(week) {
+  const url = `${YF_PROXY_URL}/ff-calendar?week=${week === 'nextweek' ? 'nextweek' : 'thisweek'}`;
+  const j = await httpsGet(url);
+  if (!Array.isArray(j) || !j.length) throw new Error('empty FF response');
+  const { from, to } = _weekDateRange(week);
+  return j
+    .filter(e => e.currency === 'USD' && e.date && e.date.slice(0, 10) >= from && e.date.slice(0, 10) <= to)
+    .map(_ffNormalize);
+}
+
 async function _fetchTVCalendar(week) {
   const tvWeek = week === 'nextweek' ? 'next' : 'this';
   const url = `${YF_PROXY_URL}/econ-calendar?week=${tvWeek}`;
   const j = await httpsGet(url);
   if (!Array.isArray(j) || !j.length) throw new Error('empty TV response');
-  // TV returns 3+ weeks — filter to target week's Mon–Fri range
   const { from, to } = _weekDateRange(week);
   return j
     .filter(e => (e.currency === 'USD' || e.country === 'US') && e.date >= from && e.date <= to)
@@ -889,18 +918,17 @@ async function _fetchTVCalendar(week) {
 }
 
 async function fetchAllUSDEvents(week = 'thisweek') {
-  // 1. TradingView via Cloudflare worker — primary, always fresh, 3 weeks ahead
+  const timeout = ms => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
+
+  // 1. ForexFactory via Cloudflare worker — correct dates, correct impact
   try {
-    const result = await Promise.race([
-      _fetchTVCalendar(week),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000)),
-    ]);
+    const result = await Promise.race([_fetchFFCalendar(week), timeout(12000)]);
     if (Array.isArray(result) && result.length) {
-      console.log(`TradingView calendar (${week}): ${result.length} USD events`);
+      console.log(`FF calendar (${week}): ${result.length} USD events`);
       try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
       return result;
     }
-  } catch (e) { console.warn(`TV calendar failed (${week}): ${e.message}`); }
+  } catch (e) { console.warn(`FF calendar failed (${week}): ${e.message}`); }
 
   // 2. File cache fallback — only if dates match current week
   try {
@@ -911,34 +939,28 @@ async function fetchAllUSDEvents(week = 'thisweek') {
       if (Array.isArray(j) && j.length > 0) {
         const { from, to } = _weekDateRange(week);
         const hasMatchingDate = j.some(e => {
-          const d = (e.date || e.fullDate || '').slice(0, 10);
+          const d = (e.date || '').slice(0, 10);
           return d >= from && d <= to;
         });
         if (hasMatchingDate) {
           console.log(`Calendar loaded from file cache (${week}): ${j.length} events`);
-          return j;
+          // Normalize FF format (full ISO date) same as live fetch
+          return j.filter(e => e.currency === 'USD').map(_ffNormalize);
         }
         console.warn(`File cache (${week}) stale — dates don't match ${from}–${to}`);
       }
     }
   } catch {}
 
-  // 3. FF direct fallback
+  // 3. TradingView fallback
   try {
-    console.warn(`Falling back to FF direct (${week})...`);
-    const FF_URL = `https://nfs.faireconomy.media/ff_calendar_${week}.json`;
-    const r = await fetch(FF_URL, { headers: { 'User-Agent': 'Wget/1.21.3', 'Accept': '*/*' } });
-    if (r.ok) {
-      const text = await r.text();
-      if (!text.trim().startsWith('<')) {
-        const result = JSON.parse(text);
-        if (Array.isArray(result) && result.length) {
-          try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
-          return result;
-        }
-      }
+    console.warn(`Falling back to TradingView (${week})...`);
+    const result = await Promise.race([_fetchTVCalendar(week), timeout(12000)]);
+    if (Array.isArray(result) && result.length) {
+      console.log(`TV calendar fallback (${week}): ${result.length} USD events`);
+      return result;
     }
-  } catch (e) { console.warn(`FF fallback failed: ${e.message}`); }
+  } catch (e) { console.warn(`TV fallback failed (${week}): ${e.message}`); }
 
   console.error(`All fetch attempts failed for ${week}`);
   return [];
