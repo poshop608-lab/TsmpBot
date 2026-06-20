@@ -818,8 +818,43 @@ async function _fetchInvesting(week) {
   });
 }
 
+async function _fetchTVCalendar(week) {
+  const tvWeek = week === 'nextweek' ? 'next' : 'this';
+  const url = `${YF_PROXY_URL}/econ-calendar?week=${tvWeek}`;
+  const j = await httpsGet(url);
+  if (!Array.isArray(j) || !j.length) throw new Error('empty TV response');
+  // Filter USD only, map to canonical shape
+  return j
+    .filter(e => e.currency === 'USD' || e.country === 'US')
+    .map(e => ({
+      title:    e.title,
+      name:     e.title,
+      date:     e.date,           // YYYY-MM-DD
+      time:     e.time || '',     // HH:MM ET
+      impact:   e.impact,         // 'High' | 'Medium' | 'Low'
+      forecast: e.forecast || '',
+      previous: e.previous || '',
+      actual:   e.actual   || '',
+      country:  e.country  || 'US',
+      currency: e.currency || 'USD',
+    }));
+}
+
 async function fetchAllUSDEvents(week = 'thisweek') {
-  // 1. Read from file cache — only if events fall within the correct week
+  // 1. TradingView via Cloudflare worker — primary, always fresh, 3 weeks ahead
+  try {
+    const result = await Promise.race([
+      _fetchTVCalendar(week),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000)),
+    ]);
+    if (Array.isArray(result) && result.length) {
+      console.log(`TradingView calendar (${week}): ${result.length} USD events`);
+      try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
+      return result;
+    }
+  } catch (e) { console.warn(`TV calendar failed (${week}): ${e.message}`); }
+
+  // 2. File cache fallback — only if dates match current week
   try {
     const filePath = path.join(__dirname, 'data', `ff_${week}.json`);
     const raw = fs.readFileSync(filePath, 'utf8').trim();
@@ -832,29 +867,15 @@ async function fetchAllUSDEvents(week = 'thisweek') {
           return d >= from && d <= to;
         });
         if (hasMatchingDate) {
-          console.log(`Calendar loaded from file (${week}): ${j.length} events`);
+          console.log(`Calendar loaded from file cache (${week}): ${j.length} events`);
           return j;
         }
-        console.warn(`File cache (${week}) is stale — dates don't match ${from}–${to}, re-fetching`);
+        console.warn(`File cache (${week}) stale — dates don't match ${from}–${to}`);
       }
     }
   } catch {}
 
-  // 2. Investing.com — works for any week including future dates, no rate limit
-  try {
-    console.log(`Fetching from Investing.com (${week})...`);
-    const result = await Promise.race([
-      _fetchInvesting(week),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000)),
-    ]);
-    if (Array.isArray(result) && result.length) {
-      console.log(`Investing.com (${week}): ${result.length} events`);
-      try { fs.writeFileSync(path.join(__dirname, 'data', `ff_${week}.json`), JSON.stringify(result)); } catch {}
-      return result;
-    }
-  } catch (e) { console.warn(`Investing.com fetch failed: ${e.message}`); }
-
-  // 3. FF direct fallback (thisweek/nextweek only, may be rate limited)
+  // 3. FF direct fallback
   try {
     console.warn(`Falling back to FF direct (${week})...`);
     const FF_URL = `https://nfs.faireconomy.media/ff_calendar_${week}.json`;
@@ -946,7 +967,7 @@ function buildDayEmbed(weekData, i) {
       const tier = _envTier(e.title || e.name || '');
       const tierLabel = tier === 1 ? '`T1`' : tier === 2 ? '`T2`' : '`T3`';
       const impactDot = (e.impact === 'High' || e.impact === 'H') ? '🔴' : '🟡';
-      const time = e.date ? fmtEventTime(e.date) : (e.time || 'TBD');
+      const time = e.time || (e.date ? fmtEventTime(e.date) : 'TBD');
       const name = e.title || e.name || 'Unknown';
       const forecast = e.forecast ? ` · F: ${e.forecast}` : '';
       const prev = (e.previous || e.prev) ? ` · P: ${e.previous || e.prev}` : '';
@@ -1145,7 +1166,7 @@ async function buildEnvCalendarCard(events) {
 
       // Time
       ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '9px Jakarta400';
-      ctx.fillText(fmtEventTime(e.date), cx + DAY_INNER_PAD + 14, ey + 11);
+      ctx.fillText(e.time || fmtEventTime(e.date), cx + DAY_INNER_PAD + 14, ey + 11);
 
       // Title — truncate to fit column width
       ctx.font = (isHigh ? 'bold ' : '') + '11px Jakarta' + (isHigh ? '700' : '400');
