@@ -702,7 +702,7 @@ async function buildEnvEngineCard(allEvents) {
   ctx.strokeStyle = ruleG; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(PAD, footY); ctx.lineTo(W - PAD, footY); ctx.stroke();
   ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.font = 'italic 11px Jakarta300i';
-  ctx.fillText('Source: ForexFactory  ·  USD events only  ·  Based on TSMP news protocols  ·  The Smart Money Paradigm', PAD, footY + 20);
+  ctx.fillText('Source: TradingView  ·  USD events only  ·  Based on TSMP news protocols  ·  The Smart Money Paradigm', PAD, footY + 20);
 
   return canvas.toBuffer('image/png');
 }
@@ -823,15 +823,16 @@ async function _fetchTVCalendar(week) {
   const url = `${YF_PROXY_URL}/econ-calendar?week=${tvWeek}`;
   const j = await httpsGet(url);
   if (!Array.isArray(j) || !j.length) throw new Error('empty TV response');
-  // Filter USD only, map to canonical shape
+  // TV returns 3+ weeks — filter to target week's Mon–Fri range
+  const { from, to } = _weekDateRange(week);
   return j
-    .filter(e => e.currency === 'USD' || e.country === 'US')
+    .filter(e => (e.currency === 'USD' || e.country === 'US') && e.date >= from && e.date <= to)
     .map(e => ({
       title:    e.title,
       name:     e.title,
-      date:     e.date,           // YYYY-MM-DD
-      time:     e.time || '',     // HH:MM ET
-      impact:   e.impact,         // 'High' | 'Medium' | 'Low'
+      date:     e.date,
+      time:     e.time || '',
+      impact:   e.impact,
       forecast: e.forecast || '',
       previous: e.previous || '',
       actual:   e.actual   || '',
@@ -1205,7 +1206,7 @@ async function buildEnvCalendarCard(events) {
   ctx.strokeStyle = ruleG; ctx.lineWidth = 0.5;
   ctx.beginPath(); ctx.moveTo(PAD, footY); ctx.lineTo(W - PAD, footY); ctx.stroke();
   ctx.fillStyle = 'rgba(255,255,255,0.13)'; ctx.font = 'italic 10px Jakarta300i';
-  ctx.fillText('Source: Investing.com  ·  USD events only  ·  Based on TSMP news protocols  ·  The Smart Money Paradigm', PAD, footY + 18);
+  ctx.fillText('Source: TradingView  ·  USD events only  ·  Based on TSMP news protocols  ·  The Smart Money Paradigm', PAD, footY + 18);
 
   return canvas.toBuffer('image/png');
 }
