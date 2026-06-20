@@ -768,8 +768,9 @@ function _weekDateRange(week) {
     monday.setDate(nyNow.getDate() + d);
   }
   const friday = new Date(monday); friday.setDate(monday.getDate() + 4);
-  const fmt = d => d.toISOString().slice(0, 10);
-  return { from: fmt(monday), to: fmt(friday) };
+  // Use getFullYear/Month/Date (local time of nyNow-derived object) to avoid UTC shift
+  const fmtLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return { from: fmtLocal(monday), to: fmtLocal(friday) };
 }
 
 function _parseInvestingHTML(html) {
