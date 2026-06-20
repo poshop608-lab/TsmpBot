@@ -2361,6 +2361,8 @@ function _tickSessionHL(high, low) {
 
 // ── Macro News Feed ──
 const MACRO_NEWS_CH_ID = '1518008500679082055'; // #macro-news
+const FJ_BOT_ID        = '1517994617583308900'; // FJ NewsBot V2
+const FJ_NEWSFEED_ID   = '1518009578661347328'; // #newsfeed — FJ posts here, hidden from members
 const MACRO_POLL_MS = 5 * 60 * 1000; // every 5 min
 const seenGuids = new Set();
 let _newsBootTime = null; // set on first poll — skip articles older than 30min at startup
@@ -3833,7 +3835,36 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 // ── Text prefix commands ──
+// Auto-hide any channel FJ NewsBot creates and update relay target
+client.on(Events.ChannelCreate, async channel => {
+  if (channel.type !== 0) return;
+  // Check if FJ bot has an overwrite on this channel (it created it)
+  await new Promise(r => setTimeout(r, 1500)); // wait for perms to settle
+  const ch = channel.guild?.channels.cache.get(channel.id);
+  if (!ch) return;
+  const hasFJ = ch.permissionOverwrites?.cache.has(FJ_BOT_ID);
+  if (!hasFJ) return;
+  // Hide from everyone, allow Founder + TsmpBot
+  const EVERYONE = '1469213835666657362', FOUNDER = '1469222592312377374', BOT = '1510284937159508061';
+  ch.permissionOverwrites.edit(EVERYONE, { ViewChannel: false }).catch(() => {});
+  ch.permissionOverwrites.edit(FOUNDER,  { ViewChannel: true  }).catch(() => {});
+  ch.permissionOverwrites.edit(BOT,      { ViewChannel: true  }).catch(() => {});
+  console.log('[FJ] Auto-hidden new channel:', ch.name, ch.id);
+});
+
 client.on(Events.MessageCreate, async message => {
+  // Relay FJ NewsBot messages from its hidden channel → #macro-news
+  if (message.author.id === FJ_BOT_ID && message.channel.id !== MACRO_NEWS_CH_ID) {
+    const target = message.guild?.channels.cache.get(MACRO_NEWS_CH_ID);
+    if (target) {
+      const opts = {};
+      if (message.embeds.length)    opts.embeds  = message.embeds;
+      if (message.content)          opts.content  = message.content;
+      if (message.attachments.size) opts.files    = [...message.attachments.values()].map(a => a.url);
+      if (opts.embeds || opts.content || opts.files) await target.send(opts).catch(() => {});
+    }
+    return;
+  }
 
   if (message.author.bot) return;
   if (!message.content.startsWith('!')) return;
