@@ -964,9 +964,10 @@ async function getEnvWeekData() {
   // On Sunday buildEnvEngineWeek shows NEXT week dates — must fetch nextweek events
   // If nextweek not published yet, fall back to thisweek but buildEnvEngineWeek
   // will show next week dates with no matches — so force thisweek dates via allEvents
-  const dow = new Date().getDay(); // 0=Sun
+  const dow = new Date().getDay(); // 0=Sun, 6=Sat
   let allEvents;
-  if (dow === 0) {
+  if (dow === 0 || dow === 6) {
+    // Weekend — markets closed, show next week
     allEvents = await fetchUSDEvents('nextweek');
     if (!allEvents.length) allEvents = await fetchUSDEvents('thisweek');
   } else {
