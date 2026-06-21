@@ -3890,14 +3890,20 @@ client.on(Events.ChannelCreate, async channel => {
 client.on(Events.MessageCreate, async message => {
   // Relay FJ NewsBot messages from its hidden channel → #macro-news
   if (message.author.id === FJ_BOT_ID && message.channel.id !== MACRO_NEWS_CH_ID) {
+    console.log(`[FJ relay] msg from FJ in #${message.channel.name} (${message.channel.id}) — embeds:${message.embeds.length} content:${!!message.content} attachments:${message.attachments.size}`);
     const target = message.guild?.channels.cache.get(MACRO_NEWS_CH_ID);
-    if (target) {
-      const opts = {};
-      if (message.embeds.length)    opts.embeds  = message.embeds;
-      if (message.content)          opts.content  = message.content;
-      if (message.attachments.size) opts.files    = [...message.attachments.values()].map(a => a.url);
-      if (opts.embeds || opts.content || opts.files) await target.send(opts).catch(() => {});
+    if (!target) { console.warn('[FJ relay] macro-news channel not found'); return; }
+    // Re-fetch to ensure embeds are populated (Discord may not deliver them on first event)
+    let msg = message;
+    if (!message.embeds.length && !message.content) {
+      try { msg = await message.channel.messages.fetch(message.id); } catch {}
     }
+    const opts = {};
+    if (msg.embeds.length)    opts.embeds  = msg.embeds;
+    if (msg.content)          opts.content = msg.content;
+    if (msg.attachments.size) opts.files   = [...msg.attachments.values()].map(a => a.url);
+    console.log(`[FJ relay] sending to macro-news — embeds:${(opts.embeds||[]).length} content:${!!opts.content}`);
+    if (opts.embeds || opts.content || opts.files) await target.send(opts).catch(e => console.error('[FJ relay] send err:', e.message));
     return;
   }
 
@@ -3943,6 +3949,17 @@ client.once(Events.ClientReady, () => {
     if (vcRole) { VC_ALERT_ROLE_ID = vcRole.id; }
     const vcSchedCh = guild.channels.cache.find(c => c.name === '📅〢vc-schedule');
     if (vcSchedCh) { VC_SCHED_CH_ID = vcSchedCh.id; }
+
+    // Ensure bot can see any channel FJ NewsBot has access to (survives restarts)
+    const EVERYONE_ID = '1469213835666657362', FOUNDER_ID = '1469222592312377374', BOT_ROLE_ID = '1510284937159508061';
+    for (const ch of guild.channels.cache.values()) {
+      if (ch.type !== 0) continue;
+      if (!ch.permissionOverwrites?.cache.has(FJ_BOT_ID)) continue;
+      ch.permissionOverwrites.edit(EVERYONE_ID, { ViewChannel: false }).catch(() => {});
+      ch.permissionOverwrites.edit(FOUNDER_ID,  { ViewChannel: true  }).catch(() => {});
+      ch.permissionOverwrites.edit(BOT_ROLE_ID, { ViewChannel: true  }).catch(() => {});
+      console.log('[FJ] Restored perms on FJ channel:', ch.name, ch.id);
+    }
 
     // Restore VC countdown from file (survives Railway restarts)
     const saved = _vcLoad();
