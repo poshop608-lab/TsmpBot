@@ -2185,7 +2185,11 @@ async function _pollNQSweeps() {
 
     function collectAlert(key, label, direction, lvlPrice) {
       if (_swept[key]) return;
+      // Extra guard: don't re-fire within 2 hours even after restarts
+      const tsKey = `_ts_${key}`;
+      if (_swept[tsKey] && (Date.now() - _swept[tsKey]) < 2 * 60 * 60 * 1000) return;
       _swept[key] = true;
+      _swept[tsKey] = Date.now();
       pendingAlerts.push({ key, label, direction, lvlPrice });
     }
 
@@ -2246,8 +2250,9 @@ async function _pollNQSweeps() {
     if (lvl.pwl   && low  < lvl.pwl)   collectAlert('pwl',   'PWL', 'below', lvl.pwl);
     if (lvl.pmh   && high > lvl.pmh)   collectAlert('pmh',   'PMH', 'above', lvl.pmh);
     if (lvl.pml   && low  < lvl.pml)   collectAlert('pml',   'PML', 'below', lvl.pml);
-    if (lvl.premh && high > lvl.premh && hm >= 570) collectAlert('premh', 'PreMH', 'above', lvl.premh);
-    if (lvl.preml && low  < lvl.preml && hm >= 570) collectAlert('preml', 'PreML', 'below', lvl.preml);
+    // Only alert PreMH/PreML after 9:30 ET AND pre-market window was actually observed today
+    if (lvl.premh && high > lvl.premh && hm >= 570 && _nqLevels.premh !== null) collectAlert('premh', 'PreMH', 'above', lvl.premh);
+    if (lvl.preml && low  < lvl.preml && hm >= 570 && _nqLevels.preml !== null) collectAlert('preml', 'PreML', 'below', lvl.preml);
 
     // Build pre-market H/L
     if (hm >= 420 && hm < 570) {
