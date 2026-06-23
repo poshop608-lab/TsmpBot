@@ -3903,7 +3903,7 @@ client.on(Events.MessageCreate, async message => {
     }
     const opts = {};
     if (msg.embeds.length)    opts.embeds  = msg.embeds;
-    if (msg.content)          opts.content = msg.content;
+    if (msg.content)          opts.content = `-# via FinancialJuice\n${msg.content}`;
     if (msg.attachments.size) opts.files   = [...msg.attachments.values()].map(a => a.url);
     console.log(`[FJ relay] sending to macro-news — embeds:${(opts.embeds||[]).length} content:${!!opts.content}`);
     if (opts.embeds || opts.content || opts.files) await target.send(opts).catch(e => console.error('[FJ relay] send err:', e.message));
