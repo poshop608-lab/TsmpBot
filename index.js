@@ -3913,6 +3913,22 @@ client.on(Events.MessageCreate, async message => {
   const isStaff = STAFF_ROLE_IDS.some(id => message.member?.roles.cache.has(id));
   const cmd = message.content.trim().toLowerCase();
 
+  if (cmd === '!fj-debug') {
+    if (!isStaff) return;
+    const lines = [];
+    lines.push(`FJ_BOT_ID: \`${FJ_BOT_ID}\``);
+    lines.push(`MACRO_NEWS_CH_ID: \`${MACRO_NEWS_CH_ID}\``);
+    lines.push(`FJ_NEWSFEED_ID (hardcoded): \`${FJ_NEWSFEED_ID}\``);
+    lines.push('**Channels bot can see:**');
+    for (const ch of message.guild.channels.cache.values()) {
+      if (ch.type !== 0) continue;
+      const hasFJ = ch.permissionOverwrites?.cache.has(FJ_BOT_ID);
+      lines.push(`\`${ch.id}\` #${ch.name}${hasFJ ? ' ← **FJ overwrite**' : ''}`);
+    }
+    await message.reply({ content: lines.join('\n').slice(0, 1990), allowedMentions: { repliedUser: false } });
+    return;
+  }
+
   if (cmd === '!economic-calendar') {
     if (!isStaff) return message.reply({ content: 'No permission.', allowedMentions: { repliedUser: false } });
     if (!ENV_CH_ID) return message.reply({ content: 'Run `/setup-economic-calendar` first.', allowedMentions: { repliedUser: false } });
