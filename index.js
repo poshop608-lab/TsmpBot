@@ -2100,9 +2100,7 @@ async function _seedSweptFromCurrentPrice() {
       { key: 'nyam',   end: 690, labelH: 'NYAH', labelL: 'NYAL' },
       { key: 'nypm',   end: 960, labelH: 'NYPH', labelL: 'NYPL' },
     ];
-    const curSessKey = hm >= 1080 ? 'asia' : hm < 420 ? 'london' : hm < 690 ? 'nyam' : hm < 960 ? 'nypm' : null;
     for (const s of SESS_SEED) {
-      if (s.key === curSessKey) continue; // skip active session
       const sd = _tcSessions[s.key];
       if (!sd) continue;
       const sH = _pineLevels[s.labelH.toLowerCase()] || sd.h;
