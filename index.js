@@ -3893,13 +3893,8 @@ client.on(Events.ChannelCreate, async channel => {
 });
 
 client.on(Events.MessageCreate, async message => {
-  // Debug: log all bot messages so we can confirm FJ is seen and get real author ID
-  if (message.author.bot && message.channel.id === FJ_NEWSFEED_ID) {
-    console.log(`[FJ debug] bot msg in #newsfeed — author:${message.author.id} (${message.author.username}) embeds:${message.embeds.length} content:${message.content?.slice(0,80)||'(none)'}`);
-  }
-
-  // Relay FJ NewsBot messages from its hidden channel → #macro-news
-  if (message.author.id === FJ_BOT_ID && message.channel.id !== MACRO_NEWS_CH_ID) {
+  // Relay anything posted in #newsfeed → #macro-news (FJ posts as webhook, not bot user)
+  if (message.channel.id === FJ_NEWSFEED_ID) {
     console.log(`[FJ relay] msg from FJ in #${message.channel.name} (${message.channel.id}) — embeds:${message.embeds.length} content:${!!message.content} attachments:${message.attachments.size}`);
     const target = message.guild?.channels.cache.get(MACRO_NEWS_CH_ID);
     if (!target) { console.warn('[FJ relay] macro-news channel not found'); return; }
