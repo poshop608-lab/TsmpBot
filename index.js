@@ -3893,6 +3893,11 @@ client.on(Events.ChannelCreate, async channel => {
 });
 
 client.on(Events.MessageCreate, async message => {
+  // Debug: log all bot messages so we can confirm FJ is seen and get real author ID
+  if (message.author.bot && message.channel.id === FJ_NEWSFEED_ID) {
+    console.log(`[FJ debug] bot msg in #newsfeed — author:${message.author.id} (${message.author.username}) embeds:${message.embeds.length} content:${message.content?.slice(0,80)||'(none)'}`);
+  }
+
   // Relay FJ NewsBot messages from its hidden channel → #macro-news
   if (message.author.id === FJ_BOT_ID && message.channel.id !== MACRO_NEWS_CH_ID) {
     console.log(`[FJ relay] msg from FJ in #${message.channel.name} (${message.channel.id}) — embeds:${message.embeds.length} content:${!!message.content} attachments:${message.attachments.size}`);
@@ -3923,12 +3928,28 @@ client.on(Events.MessageCreate, async message => {
     const lines = [];
     lines.push(`FJ_BOT_ID: \`${FJ_BOT_ID}\``);
     lines.push(`MACRO_NEWS_CH_ID: \`${MACRO_NEWS_CH_ID}\``);
-    lines.push(`FJ_NEWSFEED_ID (hardcoded): \`${FJ_NEWSFEED_ID}\``);
-    lines.push('**Channels bot can see:**');
+    lines.push(`FJ_NEWSFEED_ID: \`${FJ_NEWSFEED_ID}\``);
+    // Try to fetch last 5 messages from newsfeed channel
+    const newsfeedCh = message.guild.channels.cache.get(FJ_NEWSFEED_ID);
+    if (!newsfeedCh) {
+      lines.push(`❌ Cannot find newsfeed channel \`${FJ_NEWSFEED_ID}\` in cache`);
+    } else {
+      lines.push(`✅ Newsfeed channel found: #${newsfeedCh.name}`);
+      try {
+        const msgs = await newsfeedCh.messages.fetch({ limit: 3 });
+        lines.push(`Last ${msgs.size} messages in #newsfeed:`);
+        for (const m of msgs.values()) {
+          lines.push(`  author:\`${m.author.id}\` embeds:${m.embeds.length} content:${m.content?.slice(0,50)||'(none)'}`);
+        }
+      } catch (e) {
+        lines.push(`❌ Cannot fetch messages: ${e.message}`);
+      }
+    }
+    lines.push('**Channels bot can see (text only):**');
     for (const ch of message.guild.channels.cache.values()) {
       if (ch.type !== 0) continue;
       const hasFJ = ch.permissionOverwrites?.cache.has(FJ_BOT_ID);
-      lines.push(`\`${ch.id}\` #${ch.name}${hasFJ ? ' ← **FJ overwrite**' : ''}`);
+      if (hasFJ) lines.push(`\`${ch.id}\` #${ch.name} ← **FJ overwrite**`);
     }
     await message.reply({ content: lines.join('\n').slice(0, 1990), allowedMentions: { repliedUser: false } });
     return;
