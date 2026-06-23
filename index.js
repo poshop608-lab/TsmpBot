@@ -2393,7 +2393,7 @@ function _tickSessionHL(high, low) {
 // ── Macro News Feed ──
 const MACRO_NEWS_CH_ID = '1518008500679082055'; // #macro-news
 const FJ_BOT_ID        = '1517994617583308900'; // FJ NewsBot V2
-const FJ_NEWSFEED_ID   = '1518009578661347328'; // #newsfeed — FJ posts here, hidden from members
+const FJ_NEWSFEED_ID   = '1518179483612483725'; // #newsfeed — FJ posts here, hidden from members
 const MACRO_POLL_MS = 5 * 60 * 1000; // every 5 min
 const seenGuids = new Set();
 let _newsBootTime = null; // set on first poll — skip articles older than 30min at startup
