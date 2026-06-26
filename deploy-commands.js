@@ -166,6 +166,10 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('setup-modlog')
+    .setDescription('Create Admin category + mod-log channel and start logging all server events (staff only)'),
+
+  new SlashCommandBuilder()
     .setName('setup-sweep-alerts')
     .setDescription('Create Sweep Alerts role, channels, and self-assign button (staff only)'),
 

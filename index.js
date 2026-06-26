@@ -24,6 +24,8 @@ const {
   Client,
   GatewayIntentBits,
   Events,
+  AuditLogEvent,
+  ChannelType,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -41,6 +43,9 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildInvites,
   ],
 });
 
@@ -1407,6 +1412,7 @@ let SWEEP_TC_ROLE_ID   = null;  // 📡 Sweep Alerts role
 let SWEEP_QT_ROLE_ID   = null;  // 📐 QT Theory Alerts role
 let SWEEP_ALERT_CH_ID  = null;  // #📡〢sweep-alerts channel
 let SWEEP_ROLES_CH_ID  = null;  // #🔔〢alert-roles channel
+let MOD_LOG_CH_ID      = null;  // #mod-log channel
 
 // ── VC Countdown ──
 let VC_ALERT_ROLE_ID   = null;  // 📅 VC Alerts role
@@ -3146,6 +3152,50 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
+      // ── /setup-modlog ──
+      if (commandName === 'setup-modlog') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+
+        const everyoneRole = guild.roles.everyone;
+
+        // Create or find Admin category
+        let adminCat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '🔒 ADMIN');
+        if (!adminCat) {
+          adminCat = await guild.channels.create({
+            name: '🔒 ADMIN',
+            type: ChannelType.GuildCategory,
+            permissionOverwrites: [
+              { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+              { id: STAFF_ROLE_IDS[0], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+              { id: STAFF_ROLE_IDS[1], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+            ],
+          });
+        }
+
+        // Create or find #mod-log channel
+        let modLogCh = guild.channels.cache.find(c => c.name === 'mod-log' && c.parentId === adminCat.id);
+        if (!modLogCh) {
+          modLogCh = await guild.channels.create({
+            name: 'mod-log',
+            type: ChannelType.GuildText,
+            parent: adminCat.id,
+            permissionOverwrites: [
+              { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+              { id: STAFF_ROLE_IDS[0], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory], deny: [PermissionsBitField.Flags.SendMessages] },
+              { id: STAFF_ROLE_IDS[1], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory], deny: [PermissionsBitField.Flags.SendMessages] },
+            ],
+            topic: 'Automated server audit log — all changes tracked here.',
+          });
+        }
+        MOD_LOG_CH_ID = modLogCh.id;
+
+        await interaction.editReply({ content: `✅ Mod log active!\n**Category:** ${adminCat.name}\n**Channel:** <#${modLogCh.id}>` });
+        await modLogCh.send({ embeds: [new EmbedBuilder().setColor(0x6366f1).setTitle('📋 Mod Log Active').setDescription('All server events will be logged here automatically.').setTimestamp()] });
+        return;
+      }
+
       // ── /setup-vc-alerts ──
       if (commandName === 'setup-vc-alerts') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
@@ -4118,5 +4168,322 @@ app.get('/health', (_, res) => res.json({ ok: true, bot: client.user?.tag || 'st
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Webhook server listening on port ${PORT}`));
+
+// ══════════════════════════════════════════════════════
+// MOD LOG — all server audit events
+// ══════════════════════════════════════════════════════
+
+function _mlCh(guild) {
+  if (!MOD_LOG_CH_ID) return null;
+  return guild?.channels.cache.get(MOD_LOG_CH_ID) || null;
+}
+function _mlSend(guild, embed) {
+  const ch = _mlCh(guild);
+  if (ch) ch.send({ embeds: [embed] }).catch(() => {});
+}
+function _mlEmbed(color, title, fields, user) {
+  const e = new EmbedBuilder().setColor(color).setTitle(title).setTimestamp();
+  if (fields.length) e.addFields(fields);
+  if (user) e.setFooter({ text: `User ID: ${user.id}`, iconURL: user.displayAvatarURL?.() });
+  return e;
+}
+
+// Message deleted
+client.on(Events.MessageDelete, async msg => {
+  if (!MOD_LOG_CH_ID || msg.author?.bot) return;
+  const embed = _mlEmbed(0xef4444, '🗑️ Message Deleted', [
+    { name: 'Author', value: msg.author ? `<@${msg.author.id}> (${msg.author.tag})` : 'Unknown', inline: true },
+    { name: 'Channel', value: `<#${msg.channelId}>`, inline: true },
+    { name: 'Content', value: msg.content?.slice(0, 1000) || '*(no text — possibly embed/attachment)*' },
+  ], msg.author);
+  _mlSend(msg.guild, embed);
+});
+
+// Message edited
+client.on(Events.MessageUpdate, async (oldMsg, newMsg) => {
+  if (!MOD_LOG_CH_ID || newMsg.author?.bot) return;
+  if (oldMsg.content === newMsg.content) return;
+  const embed = _mlEmbed(0xf59e0b, '✏️ Message Edited', [
+    { name: 'Author', value: `<@${newMsg.author.id}> (${newMsg.author.tag})`, inline: true },
+    { name: 'Channel', value: `<#${newMsg.channelId}>`, inline: true },
+    { name: 'Jump', value: `[View Message](${newMsg.url})`, inline: true },
+    { name: 'Before', value: oldMsg.content?.slice(0, 500) || '*(unknown)*' },
+    { name: 'After', value: newMsg.content?.slice(0, 500) || '*(empty)*' },
+  ], newMsg.author);
+  _mlSend(newMsg.guild, embed);
+});
+
+// Member join
+client.on(Events.GuildMemberAdd, member => {
+  if (!MOD_LOG_CH_ID) return;
+  const created = `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`;
+  const embed = _mlEmbed(0x22c55e, '📥 Member Joined', [
+    { name: 'User', value: `<@${member.id}> (${member.user.tag})`, inline: true },
+    { name: 'Account Created', value: created, inline: true },
+    { name: 'Member Count', value: String(member.guild.memberCount), inline: true },
+  ], member.user);
+  _mlSend(member.guild, embed);
+});
+
+// Member leave
+client.on(Events.GuildMemberRemove, member => {
+  if (!MOD_LOG_CH_ID) return;
+  const roles = member.roles.cache.filter(r => r.id !== member.guild.id).map(r => r.name).join(', ') || 'None';
+  const embed = _mlEmbed(0xf87171, '📤 Member Left', [
+    { name: 'User', value: `${member.user.tag} (${member.id})`, inline: true },
+    { name: 'Roles', value: roles.slice(0, 500) },
+  ], member.user);
+  _mlSend(member.guild, embed);
+});
+
+// Member update — roles added/removed, nickname change, timeout
+client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+  if (!MOD_LOG_CH_ID) return;
+  const fields = [];
+
+  // Nickname
+  if (oldMember.nickname !== newMember.nickname) {
+    fields.push({ name: 'Nickname Before', value: oldMember.nickname || '*(none)*', inline: true });
+    fields.push({ name: 'Nickname After', value: newMember.nickname || '*(removed)*', inline: true });
+  }
+
+  // Roles added
+  const added = newMember.roles.cache.filter(r => !oldMember.roles.cache.has(r.id));
+  if (added.size) fields.push({ name: 'Roles Added', value: added.map(r => `<@&${r.id}>`).join(', ') });
+
+  // Roles removed
+  const removed = oldMember.roles.cache.filter(r => !newMember.roles.cache.has(r.id));
+  if (removed.size) fields.push({ name: 'Roles Removed', value: removed.map(r => `<@&${r.id}>`).join(', ') });
+
+  // Timeout
+  const wasTimedOut = !!oldMember.communicationDisabledUntil;
+  const isTimedOut  = !!newMember.communicationDisabledUntil;
+  if (!wasTimedOut && isTimedOut) fields.push({ name: 'Timeout Applied', value: `Until <t:${Math.floor(newMember.communicationDisabledUntilTimestamp / 1000)}:F>` });
+  if (wasTimedOut && !isTimedOut) fields.push({ name: 'Timeout Removed', value: 'Member timed-out status cleared' });
+
+  if (!fields.length) return;
+  fields.unshift({ name: 'User', value: `<@${newMember.id}> (${newMember.user.tag})`, inline: true });
+
+  // Try to find who made the change via audit log
+  try {
+    await new Promise(r => setTimeout(r, 1000));
+    const log = await newMember.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberUpdate }).catch(() => null);
+    const entry = log?.entries.first();
+    if (entry && entry.target.id === newMember.id && Date.now() - entry.createdTimestamp < 5000) {
+      fields.push({ name: 'Changed By', value: `<@${entry.executor.id}>`, inline: true });
+    }
+  } catch {}
+
+  const title = added.size ? '🎭 Role Added' : removed.size ? '🎭 Role Removed' : '👤 Member Updated';
+  _mlSend(newMember.guild, _mlEmbed(0x818cf8, title, fields, newMember.user));
+});
+
+// User update — username/avatar change (global, not guild-specific)
+client.on(Events.UserUpdate, (oldUser, newUser) => {
+  if (!MOD_LOG_CH_ID) return;
+  const fields = [];
+  if (oldUser.username !== newUser.username) {
+    fields.push({ name: 'Username Before', value: oldUser.username, inline: true });
+    fields.push({ name: 'Username After',  value: newUser.username, inline: true });
+  }
+  if (oldUser.discriminator !== newUser.discriminator) {
+    fields.push({ name: 'Discriminator', value: `${oldUser.discriminator} → ${newUser.discriminator}`, inline: true });
+  }
+  if (oldUser.avatar !== newUser.avatar) {
+    fields.push({ name: 'Avatar', value: 'Profile picture changed' });
+  }
+  if (!fields.length) return;
+  fields.unshift({ name: 'User', value: `<@${newUser.id}> (${newUser.tag})`, inline: true });
+  const guild = client.guilds.cache.first();
+  _mlSend(guild, _mlEmbed(0xa78bfa, '👤 User Updated', fields, newUser));
+});
+
+// Ban
+client.on(Events.GuildBanAdd, ban => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0xdc2626, '🔨 Member Banned', [
+    { name: 'User', value: `${ban.user.tag} (${ban.user.id})`, inline: true },
+    { name: 'Reason', value: ban.reason || 'No reason given' },
+  ], ban.user);
+  _mlSend(ban.guild, embed);
+});
+
+// Unban
+client.on(Events.GuildBanRemove, ban => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0x4ade80, '✅ Member Unbanned', [
+    { name: 'User', value: `${ban.user.tag} (${ban.user.id})`, inline: true },
+  ], ban.user);
+  _mlSend(ban.guild, embed);
+});
+
+// Channel create
+client.on(Events.ChannelCreate, async ch => {
+  if (!MOD_LOG_CH_ID || !ch.guild) return;
+  const typeNames = { 0: 'Text', 2: 'Voice', 4: 'Category', 5: 'Announcement', 13: 'Stage', 15: 'Forum' };
+  const embed = _mlEmbed(0x34d399, '📢 Channel Created', [
+    { name: 'Name', value: ch.name, inline: true },
+    { name: 'Type', value: typeNames[ch.type] || String(ch.type), inline: true },
+    { name: 'Category', value: ch.parent?.name || 'None', inline: true },
+  ]);
+  _mlSend(ch.guild, embed);
+});
+
+// Channel delete
+client.on(Events.ChannelDelete, ch => {
+  if (!MOD_LOG_CH_ID || !ch.guild) return;
+  const typeNames = { 0: 'Text', 2: 'Voice', 4: 'Category', 5: 'Announcement', 13: 'Stage', 15: 'Forum' };
+  const embed = _mlEmbed(0xf87171, '🗑️ Channel Deleted', [
+    { name: 'Name', value: ch.name, inline: true },
+    { name: 'Type', value: typeNames[ch.type] || String(ch.type), inline: true },
+    { name: 'Category', value: ch.parent?.name || 'None', inline: true },
+  ]);
+  _mlSend(ch.guild, embed);
+});
+
+// Channel update — name/topic/slowmode changes
+client.on(Events.ChannelUpdate, (oldCh, newCh) => {
+  if (!MOD_LOG_CH_ID || !newCh.guild) return;
+  const fields = [];
+  if (oldCh.name !== newCh.name) fields.push({ name: 'Name', value: `${oldCh.name} → ${newCh.name}` });
+  if (oldCh.topic !== newCh.topic) fields.push({ name: 'Topic Before', value: oldCh.topic || '*(none)*' }, { name: 'Topic After', value: newCh.topic || '*(removed)*' });
+  if (oldCh.rateLimitPerUser !== newCh.rateLimitPerUser) fields.push({ name: 'Slowmode', value: `${oldCh.rateLimitPerUser}s → ${newCh.rateLimitPerUser}s`, inline: true });
+  if (!fields.length) return;
+  fields.unshift({ name: 'Channel', value: `<#${newCh.id}>`, inline: true });
+  _mlSend(newCh.guild, _mlEmbed(0xfbbf24, '⚙️ Channel Updated', fields));
+});
+
+// Role create
+client.on(Events.GuildRoleCreate, role => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0x34d399, '🎭 Role Created', [
+    { name: 'Name', value: role.name, inline: true },
+    { name: 'Color', value: role.hexColor, inline: true },
+    { name: 'Mentionable', value: role.mentionable ? 'Yes' : 'No', inline: true },
+  ]);
+  _mlSend(role.guild, embed);
+});
+
+// Role delete
+client.on(Events.GuildRoleDelete, role => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0xf87171, '🗑️ Role Deleted', [
+    { name: 'Name', value: role.name, inline: true },
+    { name: 'Color', value: role.hexColor, inline: true },
+  ]);
+  _mlSend(role.guild, embed);
+});
+
+// Role update — name/color/permissions change
+client.on(Events.GuildRoleUpdate, (oldRole, newRole) => {
+  if (!MOD_LOG_CH_ID) return;
+  const fields = [];
+  if (oldRole.name !== newRole.name) fields.push({ name: 'Name', value: `${oldRole.name} → ${newRole.name}`, inline: true });
+  if (oldRole.hexColor !== newRole.hexColor) fields.push({ name: 'Color', value: `${oldRole.hexColor} → ${newRole.hexColor}`, inline: true });
+  if (oldRole.permissions.bitfield !== newRole.permissions.bitfield) fields.push({ name: 'Permissions Changed', value: 'Role permissions were modified' });
+  if (oldRole.mentionable !== newRole.mentionable) fields.push({ name: 'Mentionable', value: `${oldRole.mentionable} → ${newRole.mentionable}`, inline: true });
+  if (!fields.length) return;
+  fields.unshift({ name: 'Role', value: `<@&${newRole.id}>`, inline: true });
+  _mlSend(newRole.guild, _mlEmbed(0xfbbf24, '⚙️ Role Updated', fields));
+});
+
+// Server update — name/icon/etc
+client.on(Events.GuildUpdate, (oldGuild, newGuild) => {
+  if (!MOD_LOG_CH_ID) return;
+  const fields = [];
+  if (oldGuild.name !== newGuild.name) fields.push({ name: 'Server Name', value: `${oldGuild.name} → ${newGuild.name}` });
+  if (oldGuild.icon !== newGuild.icon) fields.push({ name: 'Icon', value: 'Server icon changed' });
+  if (oldGuild.banner !== newGuild.banner) fields.push({ name: 'Banner', value: 'Server banner changed' });
+  if (oldGuild.description !== newGuild.description) fields.push({ name: 'Description Before', value: oldGuild.description || '*(none)*' }, { name: 'Description After', value: newGuild.description || '*(removed)*' });
+  if (!fields.length) return;
+  _mlSend(newGuild, _mlEmbed(0x818cf8, '🏠 Server Updated', fields));
+});
+
+// Voice join / leave / move
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  if (!MOD_LOG_CH_ID) return;
+  const user = newState.member?.user;
+  if (!user) return;
+  if (!oldState.channelId && newState.channelId) {
+    _mlSend(newState.guild, _mlEmbed(0x4ade80, '🔊 Joined Voice', [
+      { name: 'User', value: `<@${user.id}> (${user.tag})`, inline: true },
+      { name: 'Channel', value: newState.channel?.name || '?', inline: true },
+    ], user));
+  } else if (oldState.channelId && !newState.channelId) {
+    _mlSend(oldState.guild, _mlEmbed(0xf87171, '🔇 Left Voice', [
+      { name: 'User', value: `<@${user.id}> (${user.tag})`, inline: true },
+      { name: 'Channel', value: oldState.channel?.name || '?', inline: true },
+    ], user));
+  } else if (oldState.channelId !== newState.channelId) {
+    _mlSend(newState.guild, _mlEmbed(0xfbbf24, '🔀 Moved Voice Channel', [
+      { name: 'User', value: `<@${user.id}> (${user.tag})`, inline: true },
+      { name: 'From', value: oldState.channel?.name || '?', inline: true },
+      { name: 'To', value: newState.channel?.name || '?', inline: true },
+    ], user));
+  }
+});
+
+// Invite create
+client.on(Events.InviteCreate, invite => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0x34d399, '🔗 Invite Created', [
+    { name: 'Code', value: invite.code, inline: true },
+    { name: 'Created By', value: invite.inviter ? `<@${invite.inviter.id}>` : 'Unknown', inline: true },
+    { name: 'Channel', value: invite.channel ? `<#${invite.channel.id}>` : '?', inline: true },
+    { name: 'Max Uses', value: invite.maxUses ? String(invite.maxUses) : 'Unlimited', inline: true },
+    { name: 'Expires', value: invite.expiresAt ? `<t:${Math.floor(invite.expiresTimestamp / 1000)}:R>` : 'Never', inline: true },
+  ]);
+  _mlSend(invite.guild, embed);
+});
+
+// Invite delete
+client.on(Events.InviteDelete, invite => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0xf87171, '🔗 Invite Deleted', [
+    { name: 'Code', value: invite.code, inline: true },
+    { name: 'Channel', value: invite.channel ? `<#${invite.channel.id}>` : '?', inline: true },
+  ]);
+  _mlSend(invite.guild, embed);
+});
+
+// Thread create
+client.on(Events.ThreadCreate, thread => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0x34d399, '🧵 Thread Created', [
+    { name: 'Name', value: thread.name, inline: true },
+    { name: 'Parent', value: thread.parent ? `<#${thread.parentId}>` : '?', inline: true },
+  ]);
+  _mlSend(thread.guild, embed);
+});
+
+// Thread delete
+client.on(Events.ThreadDelete, thread => {
+  if (!MOD_LOG_CH_ID) return;
+  const embed = _mlEmbed(0xf87171, '🧵 Thread Deleted', [
+    { name: 'Name', value: thread.name, inline: true },
+    { name: 'Parent', value: thread.parent ? `<#${thread.parentId}>` : '?', inline: true },
+  ]);
+  _mlSend(thread.guild, embed);
+});
+
+// Emoji create/delete
+client.on(Events.GuildEmojiCreate, emoji => {
+  if (!MOD_LOG_CH_ID) return;
+  _mlSend(emoji.guild, _mlEmbed(0x34d399, '😀 Emoji Added', [{ name: 'Name', value: `:${emoji.name}:`, inline: true }, { name: 'ID', value: emoji.id, inline: true }]));
+});
+client.on(Events.GuildEmojiDelete, emoji => {
+  if (!MOD_LOG_CH_ID) return;
+  _mlSend(emoji.guild, _mlEmbed(0xf87171, '😀 Emoji Removed', [{ name: 'Name', value: `:${emoji.name}:`, inline: true }]));
+});
+
+// Sticker create/delete
+client.on(Events.GuildStickerCreate, sticker => {
+  if (!MOD_LOG_CH_ID) return;
+  _mlSend(sticker.guild, _mlEmbed(0x34d399, '🏷️ Sticker Added', [{ name: 'Name', value: sticker.name, inline: true }]));
+});
+client.on(Events.GuildStickerDelete, sticker => {
+  if (!MOD_LOG_CH_ID) return;
+  _mlSend(sticker.guild, _mlEmbed(0xf87171, '🏷️ Sticker Removed', [{ name: 'Name', value: sticker.name, inline: true }]));
+});
 
 client.login(process.env.TOKEN);
