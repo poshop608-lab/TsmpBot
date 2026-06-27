@@ -1391,6 +1391,71 @@ const WELCOME_CH_ID    = '1510297375506436348';
 const ROLES_CH_ID      = '1510297377779748994';
 const TICKETS_CH_ID    = '1510299210371567709';
 
+async function _saveTicketTranscript(thread, closedBy) {
+  try {
+    const ticketsCh = thread.guild?.channels.cache.get(TICKETS_CH_ID);
+    if (!ticketsCh) return;
+
+    // Fetch all messages (Discord returns 100 at a time, paginate)
+    let allMsgs = [];
+    let before = null;
+    while (true) {
+      const opts = { limit: 100 };
+      if (before) opts.before = before;
+      const batch = await thread.messages.fetch(opts);
+      if (!batch.size) break;
+      allMsgs = allMsgs.concat([...batch.values()]);
+      before = batch.last().id;
+      if (batch.size < 100) break;
+    }
+    allMsgs.reverse(); // chronological order
+
+    const lines = [
+      `TICKET TRANSCRIPT — ${thread.name}`,
+      `Closed by: ${closedBy}`,
+      `Closed at: ${new Date().toUTCString()}`,
+      `Messages: ${allMsgs.length}`,
+      '═'.repeat(60),
+      '',
+    ];
+    for (const m of allMsgs) {
+      const ts = new Date(m.createdTimestamp).toUTCString();
+      const author = `${m.author.tag} (${m.author.id})`;
+      if (m.content) lines.push(`[${ts}] ${author}\n  ${m.content}`);
+      if (m.embeds.length) {
+        for (const emb of m.embeds) {
+          const t = emb.title ? `[EMBED: ${emb.title}]` : '[EMBED]';
+          const desc = emb.description ? `\n  ${emb.description.slice(0, 300)}` : '';
+          const fields = emb.fields.map(f => `\n    ${f.name}: ${f.value}`).join('');
+          lines.push(`[${ts}] ${author}\n  ${t}${desc}${fields}`);
+        }
+      }
+      if (m.attachments.size) {
+        for (const att of m.attachments.values()) lines.push(`[${ts}] ${author}\n  [ATTACHMENT: ${att.url}]`);
+      }
+    }
+
+    const text = lines.join('\n');
+    const buf = Buffer.from(text, 'utf8');
+    const filename = `${thread.name}-${Date.now()}.txt`;
+    const attachment = new AttachmentBuilder(buf, { name: filename });
+
+    const embed = new EmbedBuilder()
+      .setColor(0x374151)
+      .setTitle(`📄 Ticket Closed — ${thread.name}`)
+      .addFields(
+        { name: 'Closed By', value: closedBy, inline: true },
+        { name: 'Messages', value: String(allMsgs.length), inline: true },
+        { name: 'Closed At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+      )
+      .setFooter({ text: 'Full transcript attached as .txt file' });
+
+    await ticketsCh.send({ embeds: [embed], files: [attachment] });
+  } catch (e) {
+    console.warn('[ticket transcript] failed:', e.message);
+  }
+}
+
 const VOLUME_ROLES = {
   'Vol I':   { id: '1508205135099068606', style: ButtonStyle.Success },   // green
   'Vol II':  { id: '1508205224878411786', style: ButtonStyle.Primary },   // yellow/gold — closest is Primary (blurple), override below
@@ -3892,7 +3957,10 @@ client.on(Events.InteractionCreate, async interaction => {
         } catch (e) { console.warn('Welcome card error:', e.message); }
 
         await interaction.editReply({ content: `Done. ${volKey} assigned.` });
-        setTimeout(() => interaction.channel.delete().catch(() => {}), 3000);
+        setTimeout(async () => {
+          await _saveTicketTranscript(interaction.channel, `${interaction.user.tag} (assigned ${volKey})`);
+          await interaction.channel.delete().catch(() => {});
+        }, 3000);
       }
 
       // ── Close ticket ──
@@ -3908,6 +3976,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         await interaction.editReply({ content: 'Closing ticket...' });
+        await _saveTicketTranscript(interaction.channel, interaction.user.tag);
         await interaction.channel.delete().catch(() => {});
       }
     }
