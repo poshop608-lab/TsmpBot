@@ -3515,6 +3515,36 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: 'Test welcome card posted.' });
       }
 
+      if (commandName === 'welcome') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetUser = interaction.options.getUser('user');
+        const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
+        if (!targetMember) return interaction.editReply({ content: 'Member not found in server.' });
+
+        const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
+        if (!welcomeCh) return interaction.editReply({ content: 'Welcome channel not found.' });
+
+        const cardBuffer = await buildWelcomeCard(targetMember, guild.memberCount);
+        const attachment = new AttachmentBuilder(cardBuffer, { name: 'welcome.png' });
+
+        const welcomeEmbed = new EmbedBuilder()
+          .setColor(0x0a0a0a)
+          .setDescription(
+            `## Welcome, <@${targetUser.id}>\n\n` +
+            `*Not everyone who enters leaves the same.*\n\n` +
+            `You've been granted access. The server is yours.`
+          )
+          .setImage('attachment://welcome.png')
+          .setFooter({ text: 'The Smart Money Paradigm  ·  The market is engineered. Learn the engineering.' });
+
+        await welcomeCh.send({ embeds: [welcomeEmbed], files: [attachment] });
+        return interaction.editReply({ content: `Welcome card posted for <@${targetUser.id}>.` });
+      }
+
       if (commandName === 'news-protocols') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });

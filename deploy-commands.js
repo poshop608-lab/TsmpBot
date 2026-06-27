@@ -45,6 +45,15 @@ const commands = [
     .setDescription('Test the welcome card in the welcome channel'),
 
   new SlashCommandBuilder()
+    .setName('welcome')
+    .setDescription('Manually post a welcome card for a user (staff only)')
+    .addUserOption(opt =>
+      opt.setName('user')
+        .setDescription('The member to welcome')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('setup-economic-calendar')
     .setDescription('Create the economic-calendar channel and start the weekly scheduler'),
 
