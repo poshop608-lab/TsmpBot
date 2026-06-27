@@ -4134,6 +4134,17 @@ client.once(Events.ClientReady, () => {
     const vcSchedCh = guild.channels.cache.find(c => c.name === '📅〢vc-schedule');
     if (vcSchedCh) { VC_SCHED_CH_ID = vcSchedCh.id; }
 
+    // Lock #tickets to Founder only — deny everyone else including Moderator
+    const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
+    if (ticketsCh) {
+      ticketsCh.permissionOverwrites.set([
+        { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: STAFF_ROLE_IDS[0], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory], deny: [PermissionsBitField.Flags.SendMessages] },
+        { id: '1510284937159508061', allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+      ]).catch(() => {});
+      console.log('[tickets] Locked #tickets to Founder only');
+    }
+
     // Ensure bot can see any channel FJ NewsBot has access to (survives restarts)
     const EVERYONE_ID = '1469213835666657362', FOUNDER_ID = '1469222592312377374', BOT_ROLE_ID = '1510284937159508061';
     for (const ch of guild.channels.cache.values()) {
