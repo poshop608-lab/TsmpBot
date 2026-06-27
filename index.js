@@ -132,7 +132,7 @@ function buildRoadmapContent() {
 }
 
 // ── Welcome card ──
-const LOGO_PATH = 'C:/Users/Administrator/Downloads/fceb53001879bcd55cccb025dbc7243b.jpg';
+const LOGO_PATH = path.join(__dirname, 'assets/logo.png');
 const FONT_BASE = path.join(__dirname, 'node_modules/@fontsource/plus-jakarta-sans/files/');
 
 GlobalFonts.registerFromPath(FONT_BASE + 'plus-jakarta-sans-latin-700-normal.woff2', 'Jakarta700');
