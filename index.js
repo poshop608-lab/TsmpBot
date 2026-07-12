@@ -3515,6 +3515,26 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: 'Test welcome card posted.' });
       }
 
+      if (commandName === 'create-invite') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        // Use the roles channel (public) so the invite lands on a real channel
+        const targetCh = guild.channels.cache.get(ROLES_CH_ID) || guild.channels.cache.find(c => c.type === 0);
+        if (!targetCh) return interaction.editReply({ content: 'No suitable channel found to create invite from.' });
+
+        const invite = await targetCh.createInvite({
+          maxAge: 0,      // never expires
+          maxUses: 0,     // unlimited uses
+          unique: true,
+          reason: `Permanent invite created by ${interaction.user.tag} via /create-invite`,
+        });
+
+        return interaction.editReply({ content: `**Permanent invite link:**\nhttps://discord.gg/${invite.code}\n\nNever expires · Unlimited uses · Created by TsmpBot` });
+      }
+
       if (commandName === 'welcome') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });

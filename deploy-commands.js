@@ -175,6 +175,10 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('create-invite')
+    .setDescription('Generate a permanent server invite link via the bot (staff only)'),
+
+  new SlashCommandBuilder()
     .setName('setup-modlog')
     .setDescription('Create Admin category + mod-log channel and start logging all server events (staff only)'),
 
