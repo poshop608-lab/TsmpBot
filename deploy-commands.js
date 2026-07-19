@@ -256,6 +256,10 @@ const commands = [
     .setName('test-freechat')
     .setDescription('Preview the free chat guide embed (staff only, ephemeral)'),
 
+  new SlashCommandBuilder()
+    .setName('test-joincard')
+    .setDescription('Preview the join welcome card using your own profile (staff only, ephemeral)'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
