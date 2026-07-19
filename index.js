@@ -1388,7 +1388,7 @@ function applyEnvOverrides(dowLabel, sd) {
 const PENDING_ROLE_ID  = '1510297038234058804';
 const MENTEE_ROLE_ID   = '1469222481247211685';
 const WELCOME_CH_ID    = '1510297375506436348';
-const ROLES_CH_ID      = '1510297377779748994';
+const ROLES_CH_ID      = '1528332521429925980';
 const TICKETS_CH_ID    = '1510299210371567709';
 
 async function _saveTicketTranscript(thread, closedBy) {
@@ -4153,6 +4153,18 @@ client.once(Events.ClientReady, () => {
     if (vcRole) { VC_ALERT_ROLE_ID = vcRole.id; }
     const vcSchedCh = guild.channels.cache.find(c => c.name === '📅〢vc-schedule');
     if (vcSchedCh) { VC_SCHED_CH_ID = vcSchedCh.id; }
+
+    // Lock #roles — everyone can view/read, only staff can send
+    const rolesCh = guild.channels.cache.get(ROLES_CH_ID);
+    if (rolesCh) {
+      rolesCh.permissionOverwrites.set([
+        { id: guild.roles.everyone.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory], deny: [PermissionsBitField.Flags.SendMessages] },
+        { id: STAFF_ROLE_IDS[0], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+        { id: STAFF_ROLE_IDS[1], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+        { id: '1510284937159508061', allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+      ]).catch(() => {});
+      console.log('[roles] Locked #roles perms');
+    }
 
     // Lock #tickets to Founder only — deny everyone else including Moderator
     const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
