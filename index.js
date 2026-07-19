@@ -4180,29 +4180,38 @@ async function _generateJoinCard(member) {
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
-  // Background
-  ctx.fillStyle = '#111114';
+  // BG — dark grey to black gradient left→right
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#1a1a1a');
+  bg.addColorStop(0.5, '#111111');
+  bg.addColorStop(1, '#000000');
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  // Subtle grid
-  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
-  ctx.lineWidth = 1;
-  for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  // Subtle top-left radial softness
+  const soft = ctx.createRadialGradient(0, 0, 0, 0, 0, 400);
+  soft.addColorStop(0, 'rgba(60,60,60,0.25)');
+  soft.addColorStop(1, 'transparent');
+  ctx.fillStyle = soft; ctx.fillRect(0, 0, W, H);
 
-  // Left glow
-  const glow = ctx.createRadialGradient(0, H/2, 0, 0, H/2, 300);
-  glow.addColorStop(0, 'rgba(160,120,255,0.10)');
-  glow.addColorStop(1, 'transparent');
-  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+  // Top edge line — grey fade
+  const topLine = ctx.createLinearGradient(0, 0, W, 0);
+  topLine.addColorStop(0, 'transparent');
+  topLine.addColorStop(0.3, 'rgba(180,180,180,0.25)');
+  topLine.addColorStop(0.7, 'rgba(180,180,180,0.25)');
+  topLine.addColorStop(1, 'transparent');
+  ctx.fillStyle = topLine; ctx.fillRect(0, 0, W, 1);
 
-  // Top accent line
-  const bar = ctx.createLinearGradient(0,0,W,0);
-  bar.addColorStop(0,'transparent'); bar.addColorStop(0.4,'rgba(160,120,255,0.6)'); bar.addColorStop(1,'transparent');
-  ctx.fillStyle = bar; ctx.fillRect(0, 0, W, 1);
+  // Bottom edge line
+  const botLine = ctx.createLinearGradient(0, 0, W, 0);
+  botLine.addColorStop(0, 'transparent');
+  botLine.addColorStop(0.3, 'rgba(80,80,80,0.2)');
+  botLine.addColorStop(0.7, 'rgba(80,80,80,0.2)');
+  botLine.addColorStop(1, 'transparent');
+  ctx.fillStyle = botLine; ctx.fillRect(0, H - 1, W, 1);
 
-  // Bot avatar as logo (circle, left)
-  const logoX = 48, logoY = H / 2, logoR = 44;
+  // Bot avatar — circle left
+  const logoX = 52, logoY = H / 2, logoR = 46;
   try {
     const botAvatarURL = client.user.displayAvatarURL({ extension: 'png', size: 128 });
     const logoImg = await loadImage(botAvatarURL);
@@ -4210,47 +4219,49 @@ async function _generateJoinCard(member) {
     ctx.beginPath(); ctx.arc(logoX, logoY, logoR, 0, Math.PI * 2); ctx.clip();
     ctx.drawImage(logoImg, logoX - logoR, logoY - logoR, logoR * 2, logoR * 2);
     ctx.restore();
-    // ring
+    // thin grey ring
     ctx.beginPath(); ctx.arc(logoX, logoY, logoR + 2, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(160,120,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = 'rgba(200,200,200,0.15)'; ctx.lineWidth = 1; ctx.stroke();
   } catch (e) {}
 
-  // Divider
-  ctx.fillStyle = 'rgba(255,255,255,0.06)';
-  ctx.fillRect(logoX + logoR + 20, 32, 1, H - 64);
+  // Vertical divider
+  const div = ctx.createLinearGradient(0, 20, 0, H - 20);
+  div.addColorStop(0, 'transparent');
+  div.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+  div.addColorStop(1, 'transparent');
+  ctx.fillStyle = div;
+  ctx.fillRect(logoX + logoR + 22, 20, 1, H - 40);
 
-  // Text area
-  const tx = logoX + logoR + 40;
+  // Text
+  const tx = logoX + logoR + 44;
 
   // Eyebrow
-  ctx.fillStyle = 'rgba(160,120,255,0.6)';
-  ctx.font = '500 11px monospace';
-  ctx.fillText('NEW MEMBER', tx, 68);
+  ctx.fillStyle = 'rgba(180,180,180,0.45)';
+  ctx.font = '500 10px monospace';
+  ctx.fillText('NEW MEMBER', tx, 66);
 
   // Username
   const username = member.user.username.length > 18
     ? member.user.username.slice(0, 17) + '…'
     : member.user.username;
-  ctx.fillStyle = '#F0EDE8';
-  ctx.font = 'bold 38px sans-serif';
-  ctx.fillText(username, tx, 118);
+  ctx.fillStyle = '#ECECEC';
+  ctx.font = 'bold 40px sans-serif';
+  ctx.fillText(username, tx, 120);
 
   // Subtext
-  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
   ctx.font = '400 13px sans-serif';
-  ctx.fillText('Smart Money Paradigm', tx, 148);
+  ctx.fillText('Smart Money Paradigm', tx, 150);
 
-  // Member count tag — bottom right
+  // Member count pill — bottom right
   const tag = `Member #${member.guild.memberCount}`;
   ctx.font = '400 11px monospace';
-  ctx.fillStyle = 'rgba(255,255,255,0.18)';
-  const tagW = ctx.measureText(tag).width + 20;
-  const tagX = W - tagW - 24, tagY = H - 32;
-  ctx.beginPath();
-  ctx.roundRect(tagX, tagY - 14, tagW, 22, 11);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.45)';
-  ctx.fillText(tag, tagX + 10, tagY + 3);
+  const tagW = ctx.measureText(tag).width + 22;
+  const tagX = W - tagW - 20, tagY = H - 28;
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.beginPath(); ctx.roundRect(tagX, tagY - 14, tagW, 22, 11); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillText(tag, tagX + 11, tagY + 3);
 
   return canvas.toBuffer('image/png');
 }
