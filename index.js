@@ -142,100 +142,85 @@ GlobalFonts.registerFromPath(FONT_BASE + 'plus-jakarta-sans-latin-300-italic.wof
 const fs = require('fs');
 
 async function buildWelcomeCard(member, memberCount) {
-  const W = 960, H = 360;
+  const W = 800, H = 200;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = '#090909';
-  ctx.fillRect(0, 0, W, H);
+  // BG — dark grey to black gradient
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#1a1a1a');
+  bg.addColorStop(0.5, '#111111');
+  bg.addColorStop(1, '#000000');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
-  const atmo = ctx.createRadialGradient(W * 0.78, H * 0.1, 0, W * 0.78, H * 0.1, W * 0.55);
-  atmo.addColorStop(0, 'rgba(255,255,255,0.035)');
-  atmo.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = atmo;
-  ctx.fillRect(0, 0, W, H);
+  // Subtle top-left radial softness
+  const soft = ctx.createRadialGradient(0, 0, 0, 0, 0, 400);
+  soft.addColorStop(0, 'rgba(60,60,60,0.25)'); soft.addColorStop(1, 'transparent');
+  ctx.fillStyle = soft; ctx.fillRect(0, 0, W, H);
 
-  ctx.strokeStyle = '#232323';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(12, 12, W - 24, H - 24);
+  // Top edge line
+  const topLine = ctx.createLinearGradient(0, 0, W, 0);
+  topLine.addColorStop(0, 'transparent');
+  topLine.addColorStop(0.3, 'rgba(180,180,180,0.25)');
+  topLine.addColorStop(0.7, 'rgba(180,180,180,0.25)');
+  topLine.addColorStop(1, 'transparent');
+  ctx.fillStyle = topLine; ctx.fillRect(0, 0, W, 1);
 
-  const logoData = fs.readFileSync(LOGO_PATH);
-  const logo = await loadImage(logoData);
-  const logoH = 250;
-  const logoW = (logo.width / logo.height) * logoH;
-  const logoX = 38;
-  const logoY = (H - logoH) / 2;
-  ctx.drawImage(logo, logoX, logoY, logoW, logoH);
+  // Bottom edge line
+  const botLine = ctx.createLinearGradient(0, 0, W, 0);
+  botLine.addColorStop(0, 'transparent');
+  botLine.addColorStop(0.3, 'rgba(80,80,80,0.2)');
+  botLine.addColorStop(0.7, 'rgba(80,80,80,0.2)');
+  botLine.addColorStop(1, 'transparent');
+  ctx.fillStyle = botLine; ctx.fillRect(0, H - 1, W, 1);
 
-  const fadeLeft = ctx.createLinearGradient(logoX, 0, logoX + 30, 0);
-  fadeLeft.addColorStop(0, '#090909'); fadeLeft.addColorStop(1, 'rgba(9,9,9,0)');
-  ctx.fillStyle = fadeLeft; ctx.fillRect(logoX, logoY, 30, logoH);
+  // Bot avatar — circle left
+  const logoX = 52, logoY = H / 2, logoR = 46;
+  try {
+    const botAvatarURL = client.user.displayAvatarURL({ extension: 'png', size: 128 });
+    const logoImg = await loadImage(botAvatarURL);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(logoX, logoY, logoR, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(logoImg, logoX - logoR, logoY - logoR, logoR * 2, logoR * 2);
+    ctx.restore();
+    ctx.beginPath(); ctx.arc(logoX, logoY, logoR + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(200,200,200,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+  } catch (e) {}
 
-  const fadeTop = ctx.createLinearGradient(0, logoY, 0, logoY + 30);
-  fadeTop.addColorStop(0, '#090909'); fadeTop.addColorStop(1, 'rgba(9,9,9,0)');
-  ctx.fillStyle = fadeTop; ctx.fillRect(logoX, logoY, logoW, 30);
+  // Vertical divider
+  const div = ctx.createLinearGradient(0, 20, 0, H - 20);
+  div.addColorStop(0, 'transparent');
+  div.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+  div.addColorStop(1, 'transparent');
+  ctx.fillStyle = div;
+  ctx.fillRect(logoX + logoR + 22, 20, 1, H - 40);
 
-  const fadeBot = ctx.createLinearGradient(0, logoY + logoH - 30, 0, logoY + logoH);
-  fadeBot.addColorStop(0, 'rgba(9,9,9,0)'); fadeBot.addColorStop(1, '#090909');
-  ctx.fillStyle = fadeBot; ctx.fillRect(logoX, logoY + logoH - 30, logoW, 30);
-
-  const fadeRight = ctx.createLinearGradient(logoX + logoW - 50, 0, logoX + logoW + 10, 0);
-  fadeRight.addColorStop(0, 'rgba(9,9,9,0)'); fadeRight.addColorStop(1, '#090909');
-  ctx.fillStyle = fadeRight; ctx.fillRect(logoX + logoW - 50, logoY, 60, logoH);
-
-  const halo = ctx.createRadialGradient(logoX + logoW / 2, H / 2, 20, logoX + logoW / 2, H / 2, 150);
-  halo.addColorStop(0, 'rgba(255,255,255,0.05)'); halo.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = halo; ctx.fillRect(0, 0, W, H);
-
-  const divX = 310;
-  const divGrad = ctx.createLinearGradient(0, 40, 0, H - 40);
-  divGrad.addColorStop(0, 'rgba(255,255,255,0)');
-  divGrad.addColorStop(0.25, 'rgba(255,255,255,0.1)');
-  divGrad.addColorStop(0.75, 'rgba(255,255,255,0.1)');
-  divGrad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.strokeStyle = divGrad; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(divX, 40); ctx.lineTo(divX, H - 40); ctx.stroke();
-
-  ctx.save();
-  ctx.translate(divX, H / 2); ctx.rotate(Math.PI / 4);
-  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
-  ctx.strokeRect(-4, -4, 8, 8);
-  ctx.restore();
-
-  const tX = 340;
-  const rG = ctx.createLinearGradient(tX, 0, W - 50, 0);
-  rG.addColorStop(0, 'rgba(255,255,255,0.12)'); rG.addColorStop(1, 'rgba(255,255,255,0)');
-
-  ctx.fillStyle = 'rgba(255,255,255,0.2)';
-  ctx.font = '10px Jakarta400';
-  ctx.fillText('T H E   S M A R T   M O N E Y   P A R A D I G M', tX, 84);
-
-  ctx.strokeStyle = rG; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(tX, 92); ctx.lineTo(W - 50, 92); ctx.stroke();
-
-  ctx.save();
-  ctx.shadowColor = 'rgba(255,255,255,0.3)'; ctx.shadowBlur = 20;
-  ctx.fillStyle = '#f8f8f8'; ctx.font = 'bold 36px Jakarta700';
+  // Text
+  const tx = logoX + logoR + 44;
   const displayName = member.user.displayName || member.user.username;
-  ctx.fillText(`Welcome, ${displayName}`, tX, 148);
-  ctx.restore();
+  const username = displayName.length > 18 ? displayName.slice(0, 17) + '…' : displayName;
 
-  ctx.save();
-  ctx.shadowColor = 'rgba(255,255,255,0.06)'; ctx.shadowBlur = 8;
-  ctx.fillStyle = 'rgba(255,255,255,0.32)'; ctx.font = 'italic 13px Jakarta300i';
-  ctx.fillText('The market is engineered. Learn the engineering.', tX, 177);
-  ctx.restore();
+  ctx.fillStyle = 'rgba(180,180,180,0.45)';
+  ctx.font = '500 10px monospace';
+  ctx.fillText('MENTORSHIP ACCESS GRANTED', tx, 66);
 
-  ctx.strokeStyle = rG;
-  ctx.beginPath(); ctx.moveTo(tX, 193); ctx.lineTo(W - 50, 193); ctx.stroke();
+  ctx.fillStyle = '#ECECEC';
+  ctx.font = 'bold 40px sans-serif';
+  ctx.fillText(username, tx, 120);
 
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.font = '12px Jakarta400';
-  ctx.fillText(`Member  #${memberCount}`, tX, 220);
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.font = '400 13px sans-serif';
+  ctx.fillText('Smart Money Paradigm', tx, 150);
 
-  ctx.fillStyle = 'rgba(255,255,255,0.1)';
-  ctx.font = 'italic 11px Jakarta300i';
-  ctx.fillText('— The Smart Money Paradigm', tX, 300);
+  // Member count pill — bottom right
+  const tag = `Member #${memberCount}`;
+  ctx.font = '400 11px monospace';
+  const tagW = ctx.measureText(tag).width + 22;
+  const tagX = W - tagW - 20, tagY = H - 28;
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.beginPath(); ctx.roundRect(tagX, tagY - 14, tagW, 22, 11); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillText(tag, tagX + 11, tagY + 3);
 
   return canvas.toBuffer('image/png');
 }
