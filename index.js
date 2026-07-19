@@ -4043,12 +4043,12 @@ client.on(Events.InteractionCreate, async interaction => {
             const welcomeEmbed = new EmbedBuilder()
               .setColor(0x0a0a0a)
               .setDescription(
-                `## Welcome, <@${targetUserId}>\n\n` +
-                `*Not everyone who enters leaves the same.*\n\n` +
-                `You've been granted **${volKey}** access. The server is yours.`
+                `## Congrats, <@${targetUserId}> 🎉\n\n` +
+                `You're officially part of the mentorship. **${volKey}** access granted.\n\n` +
+                `The market is engineered — now you learn the engineering.`
               )
               .setImage('attachment://welcome.png')
-              .setFooter({ text: 'The Smart Money Paradigm  ·  The market is engineered. Learn the engineering.' });
+              .setFooter({ text: 'The Smart Money Paradigm  ·  Welcome to the family.' });
             await welcomeCh.send({ embeds: [welcomeEmbed], files: [attachment] });
           }
         } catch (e) { console.warn('Welcome card error:', e.message); }
