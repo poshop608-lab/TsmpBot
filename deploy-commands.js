@@ -248,6 +248,14 @@ const commands = [
     .setName('giveaway')
     .setDescription('Create a giveaway with a live enter button and spin-the-wheel reveal (staff only)'),
 
+  new SlashCommandBuilder()
+    .setName('setup-freechat')
+    .setDescription('Post the user guide embed in free chat channel (staff only)'),
+
+  new SlashCommandBuilder()
+    .setName('test-freechat')
+    .setDescription('Preview the free chat guide embed (staff only, ephemeral)'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
