@@ -3249,6 +3249,21 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ embeds: [_buildFreeChatEmbed()], ephemeral: true });
       }
 
+      // ── /test-joincard ──
+      if (commandName === 'test-joincard') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        const card = await _generateJoinCard(interaction.member);
+        const file = new AttachmentBuilder(card, { name: 'welcome.png' });
+        const embed = new EmbedBuilder()
+          .setColor(0x111114)
+          .setDescription(`hey <@${interaction.user.id}> 👋 head to <#${ROLES_CH_ID}> and hit **Request Access** to join the mentorship.`)
+          .setImage('attachment://welcome.png')
+          .setFooter({ text: 'TSMP · Smart Money Paradigm' });
+        return interaction.editReply({ embeds: [embed], files: [file] });
+      }
+
       // ── /setup-modlog ──
       if (commandName === 'setup-modlog') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
