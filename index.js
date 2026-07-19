@@ -4158,6 +4158,88 @@ client.on(Events.MessageCreate, async message => {
   }
 });
 
+// ── Join welcome card ──
+async function _generateJoinCard(member) {
+  const { createCanvas, loadImage } = require('@napi-rs/canvas');
+  const W = 800, H = 200;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = '#111114';
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  // Left glow
+  const glow = ctx.createRadialGradient(0, H/2, 0, 0, H/2, 300);
+  glow.addColorStop(0, 'rgba(160,120,255,0.10)');
+  glow.addColorStop(1, 'transparent');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+
+  // Top accent line
+  const bar = ctx.createLinearGradient(0,0,W,0);
+  bar.addColorStop(0,'transparent'); bar.addColorStop(0.4,'rgba(160,120,255,0.6)'); bar.addColorStop(1,'transparent');
+  ctx.fillStyle = bar; ctx.fillRect(0, 0, W, 1);
+
+  // Bot avatar as logo (circle, left)
+  const logoX = 48, logoY = H / 2, logoR = 44;
+  try {
+    const botAvatarURL = client.user.displayAvatarURL({ extension: 'png', size: 128 });
+    const logoImg = await loadImage(botAvatarURL);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(logoX, logoY, logoR, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(logoImg, logoX - logoR, logoY - logoR, logoR * 2, logoR * 2);
+    ctx.restore();
+    // ring
+    ctx.beginPath(); ctx.arc(logoX, logoY, logoR + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(160,120,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+  } catch (e) {}
+
+  // Divider
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(logoX + logoR + 20, 32, 1, H - 64);
+
+  // Text area
+  const tx = logoX + logoR + 40;
+
+  // Eyebrow
+  ctx.fillStyle = 'rgba(160,120,255,0.6)';
+  ctx.font = '500 11px monospace';
+  ctx.fillText('NEW MEMBER', tx, 68);
+
+  // Username
+  const username = member.user.username.length > 18
+    ? member.user.username.slice(0, 17) + '…'
+    : member.user.username;
+  ctx.fillStyle = '#F0EDE8';
+  ctx.font = 'bold 38px sans-serif';
+  ctx.fillText(username, tx, 118);
+
+  // Subtext
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.font = '400 13px sans-serif';
+  ctx.fillText('Smart Money Paradigm', tx, 148);
+
+  // Member count tag — bottom right
+  const tag = `Member #${member.guild.memberCount}`;
+  ctx.font = '400 11px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  const tagW = ctx.measureText(tag).width + 20;
+  const tagX = W - tagW - 24, tagY = H - 32;
+  ctx.beginPath();
+  ctx.roundRect(tagX, tagY - 14, tagW, 22, 11);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.fillText(tag, tagX + 10, tagY + 3);
+
+  return canvas.toBuffer('image/png');
+}
+
 // ── Auto-assign Pending + welcome on join ──
 client.on(Events.GuildMemberAdd, async member => {
   try {
@@ -4166,14 +4248,18 @@ client.on(Events.GuildMemberAdd, async member => {
     console.warn('Pending role error:', e.message);
   }
 
-  // Welcome new user in free-chat
+  // Welcome new user in free-chat with card
   try {
     const ch = member.guild.channels.cache.get(FREE_CHAT_CH_ID);
     if (ch) {
-      await ch.send(
-        `hey <@${member.id}> 👋 welcome to TSMP!\n` +
-        `head over to <#${ROLES_CH_ID}> and hit **Request Access** to apply for the mentorship.`
-      );
+      const card = await _generateJoinCard(member);
+      const file = new AttachmentBuilder(card, { name: 'welcome.png' });
+      const embed = new EmbedBuilder()
+        .setColor(0x111114)
+        .setDescription(`hey <@${member.id}> 👋 head to <#${ROLES_CH_ID}> and hit **Request Access** to join the mentorship.`)
+        .setImage('attachment://welcome.png')
+        .setFooter({ text: 'TSMP · Smart Money Paradigm' });
+      await ch.send({ embeds: [embed], files: [file] });
     }
   } catch (e) {
     console.warn('Free chat welcome error:', e.message);
