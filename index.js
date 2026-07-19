@@ -4165,6 +4165,19 @@ client.on(Events.GuildMemberAdd, async member => {
   } catch (e) {
     console.warn('Pending role error:', e.message);
   }
+
+  // Welcome new user in free-chat
+  try {
+    const ch = member.guild.channels.cache.get(FREE_CHAT_CH_ID);
+    if (ch) {
+      await ch.send(
+        `hey <@${member.id}> 👋 welcome to TSMP!\n` +
+        `head over to <#${ROLES_CH_ID}> and hit **Request Access** to apply for the mentorship.`
+      );
+    }
+  } catch (e) {
+    console.warn('Free chat welcome error:', e.message);
+  }
 });
 
 client.once(Events.ClientReady, () => {
