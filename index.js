@@ -1390,6 +1390,20 @@ const MENTEE_ROLE_ID   = '1469222481247211685';
 const WELCOME_CH_ID    = '1510297375506436348';
 const ROLES_CH_ID      = '1528332521429925980';
 const TICKETS_CH_ID    = '1510299210371567709';
+const FREE_CHAT_CH_ID  = '1510297377779748994';
+
+function _buildFreeChatEmbed() {
+  return new EmbedBuilder()
+    .setColor(0x2b2d31)
+    .setTitle('👋  welcome to free chat')
+    .setDescription(
+      'feel free to introduce yourself or ask questions here.\n\n' +
+      '**want to join the mentorship?**\n' +
+      'head over to <#1528332521429925980> and hit **Request Access** — fill out the short form and our team will review your ticket.\n\n' +
+      '-# this channel is open to everyone · mentorship access is reviewed manually'
+    )
+    .setFooter({ text: 'TSMP · Smart Money Paradigm' });
+}
 
 async function _saveTicketTranscript(thread, closedBy) {
   try {
@@ -3215,6 +3229,24 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({
           content: `✅ Done!\n\n**Role:** <@&${tcRole.id}>\n**Alert channel:** <#${alertCh.id}>\n**Self-assign:** <#${rolesAlertCh.id}>`,
         });
+      }
+
+      // ── /setup-freechat ──
+      if (commandName === 'setup-freechat') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+        const ch = guild.channels.cache.get(FREE_CHAT_CH_ID);
+        if (!ch) return interaction.editReply({ content: 'Cannot find free chat channel.' });
+        await ch.send({ embeds: [_buildFreeChatEmbed()] });
+        return interaction.editReply({ content: 'Guide embed posted in free chat.' });
+      }
+
+      // ── /test-freechat ──
+      if (commandName === 'test-freechat') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        return interaction.reply({ embeds: [_buildFreeChatEmbed()], ephemeral: true });
       }
 
       // ── /setup-modlog ──
