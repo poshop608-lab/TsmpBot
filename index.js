@@ -4019,8 +4019,9 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!isStaff) return interaction.editReply({ content: 'Only staff can assign roles.' });
 
         const parts = customId.split('_');
-        const volKey = parts[1] === 'vol1' ? 'Vol I' : parts[1] === 'vol2' ? 'Vol II' : 'Vol III';
-        const targetUserId = parts[2];
+        // format: assign_vol_vol1_USERID → parts[2]=vol1, parts[3]=USERID
+        const volKey = parts[2] === 'vol1' ? 'Vol I' : parts[2] === 'vol2' ? 'Vol II' : 'Vol III';
+        const targetUserId = parts[3];
         const roleId = VOLUME_ROLES[volKey].id;
 
         const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
