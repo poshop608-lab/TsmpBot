@@ -4078,6 +4078,71 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
 
+    // ── Modal submit — access intake ──
+    if (interaction.isModalSubmit() && interaction.customId === 'access_intake_modal') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const { guild, member } = interaction;
+      const journey  = interaction.fields.getTextInputValue('intake_journey');
+      const learner  = interaction.fields.getTextInputValue('intake_learner');
+      const invest   = interaction.fields.getTextInputValue('intake_invest');
+      const referred = interaction.fields.getTextInputValue('intake_referred') || 'N/A';
+
+      const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
+      if (!ticketsCh) return interaction.editReply({ content: 'Ticket channel not found. Contact staff.' });
+
+      // Double-check no existing open ticket
+      const existing = ticketsCh.threads.cache.find(
+        t => t.name === `ticket-${member.user.username}` && !t.archived
+      );
+      if (existing) return interaction.editReply({ content: `You already have an open ticket: ${existing}` });
+
+      // Create private thread
+      const thread = await ticketsCh.threads.create({
+        name: `ticket-${member.user.username}`,
+        autoArchiveDuration: 10080,
+        type: 12, // GUILD_PRIVATE_THREAD
+        invitable: false,
+        reason: `Access application from ${member.user.tag}`,
+      });
+
+      await thread.members.add(member.user.id);
+      const allMembers = await guild.members.fetch();
+      for (const m of allMembers.values()) {
+        if (m.user.bot) continue;
+        if (STAFF_ROLE_IDS.some(id => m.roles.cache.has(id))) {
+          await thread.members.add(m.id).catch(() => {});
+        }
+      }
+
+      const intakeEmbed = new EmbedBuilder()
+        .setColor(0x2b2d31)
+        .setTitle(`📋 Access Application — ${member.user.username}`)
+        .addFields(
+          { name: 'Trading Journey & Struggle', value: journey },
+          { name: 'Learner Score (1-10)', value: learner, inline: true },
+          { name: 'Willing to Invest?', value: invest, inline: true },
+          { name: 'Referred By', value: referred, inline: true },
+        )
+        .setFooter({ text: `User ID: ${member.user.id}` })
+        .setTimestamp();
+
+      const volRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`assign_vol_vol1_${member.user.id}`).setLabel('Vol I').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`assign_vol_vol2_${member.user.id}`).setLabel('Vol II').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`assign_vol_vol3_${member.user.id}`).setLabel('Vol III').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`close_ticket_${member.user.id}`).setLabel('Close').setStyle(ButtonStyle.Danger),
+      );
+
+      await thread.send({
+        content: `<@&${STAFF_ROLE_IDS[0]}> <@&${STAFF_ROLE_IDS[1]}> — new access application from <@${member.user.id}>`,
+        embeds: [intakeEmbed],
+        components: [volRow],
+      });
+
+      return interaction.editReply({ content: `Your application has been submitted. Staff will review it shortly.` });
+    }
+
   } catch (err) {
     console.error('Interaction error:', err);
     if (!interaction.replied && !interaction.deferred) {
