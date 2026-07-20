@@ -3963,8 +3963,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const hasVolume = Object.values(VOLUME_ROLES).some(v => member.roles.cache.has(v.id));
         if (hasVolume) return interaction.reply({ content: 'You already have a role assigned.', ephemeral: true });
 
-        const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
-        const existing = ticketsCh?.threads.cache.find(
+        const rolesCh = guild.channels.cache.get(ROLES_CH_ID);
+        const existing = rolesCh?.threads.cache.find(
           t => t.name === `ticket-${member.user.username}` && !t.archived
         );
         if (existing) return interaction.reply({ content: `You already have an open ticket: ${existing}`, ephemeral: true });
@@ -4088,17 +4088,17 @@ client.on(Events.InteractionCreate, async interaction => {
       const invest   = interaction.fields.getTextInputValue('intake_invest');
       const referred = interaction.fields.getTextInputValue('intake_referred') || 'N/A';
 
-      const ticketsCh = guild.channels.cache.get(TICKETS_CH_ID);
-      if (!ticketsCh) return interaction.editReply({ content: 'Ticket channel not found. Contact staff.' });
+      // Double-check no existing open ticket in roles channel
+      const rolesCh = guild.channels.cache.get(ROLES_CH_ID);
+      if (!rolesCh) return interaction.editReply({ content: 'Roles channel not found. Contact staff.' });
 
-      // Double-check no existing open ticket
-      const existing = ticketsCh.threads.cache.find(
+      const existing = rolesCh.threads.cache.find(
         t => t.name === `ticket-${member.user.username}` && !t.archived
       );
       if (existing) return interaction.editReply({ content: `You already have an open ticket: ${existing}` });
 
-      // Create private thread
-      const thread = await ticketsCh.threads.create({
+      // Create private thread in #roles so pending user can see it
+      const thread = await rolesCh.threads.create({
         name: `ticket-${member.user.username}`,
         autoArchiveDuration: 10080,
         type: 12, // GUILD_PRIVATE_THREAD
