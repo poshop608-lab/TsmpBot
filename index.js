@@ -4372,14 +4372,15 @@ client.once(Events.ClientReady, () => {
     }
   })();
 
-  // Start NQ sweep monitor (YF polling ~30s, ~10min data delay)
-  _refreshNQLevels()
-    .then(() => _seedSweptFromCurrentPrice())
-    .catch(e => console.warn('NQ init warning:', e?.message || String(e)));
-  setInterval(() => {
-    _pollNQSweeps().catch(e => console.warn('sweep poll err:', e?.message || String(e)));
-  }, SWEEP_POLL_MS);
-  console.log('NQ sweep monitor started (YF, every 30s)');
+  // NQ sweep monitor — temporarily disabled (was sending too many alerts, burning tokens fast)
+  // To re-enable: uncomment below.
+  // _refreshNQLevels()
+  //   .then(() => _seedSweptFromCurrentPrice())
+  //   .catch(e => console.warn('NQ init warning:', e?.message || String(e)));
+  // setInterval(() => {
+  //   _pollNQSweeps().catch(e => console.warn('sweep poll err:', e?.message || String(e)));
+  // }, SWEEP_POLL_MS);
+  console.log('NQ sweep monitor: DISABLED');
 
   // Start macro news poller — first run after 10s (let bot fully init), then every 5 min
   setTimeout(() => {
