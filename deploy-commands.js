@@ -260,6 +260,19 @@ const commands = [
     .setName('test-joincard')
     .setDescription('Preview the join welcome card using your own profile (staff only, ephemeral)'),
 
+  new SlashCommandBuilder()
+    .setName('record')
+    .setDescription('Start recording a voice channel\'s screen-share + audio')
+    .addChannelOption(opt =>
+      opt.setName('channel')
+        .setDescription('Voice channel to join and record')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('stop')
+    .setDescription('Stop the current recording and upload it'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);

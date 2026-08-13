@@ -1,2 +1,10 @@
+[phases.setup]
+nixPkgs = ["ffmpeg", "xvfb-run", "pulseaudio", "xorg.xrandr"]
+
+[phases.install]
+cmds = ["npm install", "npx playwright install --with-deps chromium"]
+
 [start]
-cmd = "node index.js"
+# start Xvfb + PulseAudio, then the bot — recorder.js expects DISPLAY=:99
+# and a "discordcap" PulseAudio null-sink to already exist.
+cmd = "Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && pulseaudio --start --exit-idle-time=-1 && node index.js"

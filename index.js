@@ -2,6 +2,8 @@ require('dotenv').config();
 const path = require('path');
 const https = require('https');
 const express = require('express');
+const { startRecording, stopRecording, isRecording } = require('./recorder');
+const { uploadRecording } = require('./upload');
 
 // Works on all Node versions (no native fetch needed)
 function httpsGet(url) {
@@ -2735,6 +2737,42 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (commandName === 'ping') {
         return interaction.reply({ content: `Pong! Latency: ${client.ws.ping}ms`, ephemeral: true });
+      }
+
+      if (commandName === 'record') {
+        if (isRecording()) {
+          return interaction.reply({ content: 'Already recording. Run `/stop` first.', ephemeral: true });
+        }
+        const channel = interaction.options.getChannel('channel');
+        if (!channel?.isVoiceBased?.()) {
+          return interaction.reply({ content: 'Pick a voice channel.', ephemeral: true });
+        }
+        await interaction.reply({ content: `Starting recording of **${channel.name}**... give it a few seconds to join.` });
+        try {
+          await startRecording({ token: process.env.TOKEN, channelId: channel.id, startedByTag: interaction.user.tag });
+          await interaction.followUp(`Recording started in **${channel.name}**. Run \`/stop\` when done.`);
+        } catch (err) {
+          console.error('[record] start failed:', err);
+          await interaction.followUp(`Could not start recording: ${err.message}`);
+        }
+        return;
+      }
+
+      if (commandName === 'stop') {
+        if (!isRecording()) {
+          return interaction.reply({ content: 'Nothing is currently recording.', ephemeral: true });
+        }
+        await interaction.reply('Stopping and uploading — this can take a minute for longer sessions...');
+        try {
+          const { filePath, fileName, durationMs } = await stopRecording();
+          const url = await uploadRecording(filePath, fileName);
+          const mins = Math.round(durationMs / 60000);
+          await interaction.followUp(`Recording saved (~${mins} min):\n${url}`);
+        } catch (err) {
+          console.error('[record] stop failed:', err);
+          await interaction.followUp(`Recording failed: ${err.message}`);
+        }
+        return;
       }
 
       if (commandName === 'roadmap') {
