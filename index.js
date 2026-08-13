@@ -4052,6 +4052,54 @@ client.on(Events.InteractionCreate, async interaction => {
         await _saveTicketTranscript(interaction.channel, interaction.user.tag);
         await interaction.channel.delete().catch(() => {});
       }
+
+      // ── Resources library: Get Access → permanent pass ──
+      // Any Volume role or staff can get a pass; role check happens locally
+      // (fast, native), pass storage/issuance happens via the smp-join
+      // Cloudflare Worker so it survives Railway restarts (this bot's own
+      // filesystem is ephemeral, KV isn't). Native gateway handler — runs
+      // alongside every other button here with zero risk of the
+      // interactions-endpoint conflict that broke commands earlier.
+      if (customId.startsWith('resource_access_') || customId === 'get_pass') {
+        await interaction.deferReply({ ephemeral: true });
+
+        const hasVolume = Object.values(VOLUME_ROLES).some(v => member.roles.cache.has(v.id));
+        const isStaffMember = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
+        if (!hasVolume && !isStaffMember) {
+          return interaction.editReply({ content: "You're not enrolled yet. Join first, then come back for your pass." });
+        }
+
+        const resource = customId.startsWith('resource_access_') ? customId.replace('resource_access_', '') : null;
+        const RESOURCE_LINKS = {
+          'asia-mech':   'https://smartmoneysequence.com/models/asia-mech/',
+          'london-mech': 'https://smartmoneysequence.com/resources.html',
+        };
+        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model' };
+
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/issue-pass', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ discordId: interaction.user.id }),
+          });
+          const d = await r.json();
+          if (!d.ok) return interaction.editReply({ content: 'Could not issue a pass right now — try again shortly.' });
+
+          const link = RESOURCE_LINKS[resource] || 'https://smartmoneysequence.com/resources.html';
+          const label = RESOURCE_NAMES[resource];
+          await interaction.editReply({
+            content:
+              `Your pass:\n\`\`\`\n${d.pass}\n\`\`\`\n` +
+              `_Tap/click the code block above to copy it._\n\n` +
+              (label ? `Open **${label}**: ${link}\n` : `Open the Resources library: ${link}\n`) +
+              `Enter your pass there — it unlocks every model, permanently, on any device.\n\n` +
+              `_Don't share it — this pass is tied to your account._`,
+          });
+        } catch (e) {
+          console.error('[resource access] issue-pass failed:', e.message);
+          await interaction.editReply({ content: 'Could not reach the pass service — try again shortly.' });
+        }
+      }
     }
 
     // ── Modal submit — access intake ──
