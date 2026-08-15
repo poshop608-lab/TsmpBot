@@ -4183,9 +4183,15 @@ client.on(Events.InteractionCreate, async interaction => {
         const resource = customId.startsWith('resource_access_') ? customId.replace('resource_access_', '') : null;
         const RESOURCE_LINKS = {
           'asia-mech':   'https://smartmoneysequence.com/models/asia-mech/',
-          'london-mech': 'https://smartmoneysequence.com/resources.html',
+          'london-mech': 'https://smartmoneysequence.com/models/london-mech/',
+          'trinity':     'https://smartmoneysequence.com/models/trinity/',
+          'gbt':         'https://smartmoneysequence.com/models/gbt/',
         };
-        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model' };
+        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model', 'nyam-mech': 'NYAM Mech Model', 'trinity': 'Trinity Framework', 'gbt': 'Goldbach Time' };
+
+        if (resource === 'nyam-mech') {
+          return interaction.editReply({ content: 'NYAM Mech Model is still in development — not available yet. Check back soon.' });
+        }
 
         try {
           const r = await fetch('https://smp-join.poshop608.workers.dev/issue-pass', {
