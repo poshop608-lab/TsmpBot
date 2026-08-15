@@ -4036,6 +4036,65 @@ client.on(Events.InteractionCreate, async interaction => {
         }, 3000);
       }
 
+      // ── Grant volume role (web-purchase ticket flow) ──
+      // Web "Join Now" buttons open a ticket via the smp-join Cloudflare Worker,
+      // which builds Vol I-IV buttons with customId grant_v1/v2/v3/v4 and stamps
+      // the ticket owner into the channel topic ("{tier} enrollment — user {id}")
+      // instead of the customId suffix that native assign_vol* tickets use.
+      // These clicks used to go nowhere once the worker's interactions_endpoint_url
+      // was unregistered (fixed the gateway-vs-HTTP conflict) — nothing was left to
+      // answer them, so Discord always timed out with "application didn't respond".
+      if (customId.startsWith('grant_v')) {
+        await interaction.deferReply({ ephemeral: true });
+
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.editReply({ content: 'Only staff can assign roles.' });
+
+        const topicMatch = /^(.*) enrollment — user (\d+)$/.exec(interaction.channel.topic || '');
+        if (!topicMatch) return interaction.editReply({ content: 'Could not identify the ticket owner (topic missing/edited).' });
+        const targetUserId = topicMatch[2];
+
+        const tierKey = customId.replace('grant_', ''); // v1/v2/v3/v4
+        const volKeyMap = { v1: 'Vol I', v2: 'Vol II', v3: 'Vol III', v4: 'Vol IV' };
+        const volKey = volKeyMap[tierKey];
+        const roleId = VOLUME_ROLES[volKey]?.id;
+
+        const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
+        if (!targetMember) return interaction.editReply({ content: 'Member not found.' });
+
+        await targetMember.roles.remove(PENDING_ROLE_ID).catch(() => {});
+        if (roleId) await targetMember.roles.add(roleId);
+        await targetMember.roles.add(MENTEE_ROLE_ID);
+
+        await interaction.channel.send(
+          `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>.${roleId ? '' : ' (Vol IV role not yet created — Mentee only.)'} Welcome.`
+        );
+
+        try {
+          const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
+          if (welcomeCh) {
+            const cardBuffer = await buildWelcomeCard(targetMember, guild.memberCount);
+            const attachment = new AttachmentBuilder(cardBuffer, { name: 'welcome.png' });
+            const welcomeEmbed = new EmbedBuilder()
+              .setColor(0x0a0a0a)
+              .setDescription(
+                `## Congrats, <@${targetUserId}> 🎉\n\n` +
+                `You're officially part of the mentorship. **${volKey}** access granted.\n\n` +
+                `The market is engineered — now you learn the engineering.`
+              )
+              .setImage('attachment://welcome.png')
+              .setFooter({ text: 'The Smart Money Paradigm  ·  Welcome to the family.' });
+            await welcomeCh.send({ embeds: [welcomeEmbed], files: [attachment] });
+          }
+        } catch (e) { console.warn('Welcome card error:', e.message); }
+
+        await interaction.editReply({ content: `Done. ${volKey} assigned.` });
+        setTimeout(async () => {
+          await _saveTicketTranscript(interaction.channel, `${interaction.user.tag} (assigned ${volKey})`);
+          await interaction.channel.delete().catch(() => {});
+        }, 3000);
+      }
+
       // ── Close ticket ──
       if (customId.startsWith('close_ticket')) {
         await interaction.deferReply({ ephemeral: true });
