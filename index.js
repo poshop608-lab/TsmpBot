@@ -1394,6 +1394,7 @@ const ROLES_CH_ID      = '1528332521429925980';
 const TICKETS_CH_ID    = '1510299210371567709';
 const FREE_CHAT_CH_ID  = '1510297377779748994';
 const GENERAL_CH_ID    = '1469213842390253602';
+const PREMIUM_SIGNAL_ROLE_ID = '1538203144868208680';
 
 function _buildFreeChatEmbed() {
   return new EmbedBuilder()
@@ -1477,6 +1478,7 @@ const VOLUME_ROLES = {
   'Vol I':   { id: '1508205135099068606', style: ButtonStyle.Success },   // green
   'Vol II':  { id: '1508205224878411786', style: ButtonStyle.Primary },   // yellow/gold — closest is Primary (blurple), override below
   'Vol III': { id: '1508205421385748740', style: ButtonStyle.Danger },    // red
+  'Vol IV':  { id: '1538202902294823024', style: ButtonStyle.Secondary },
 };
 
 const STAFF_ROLE_IDS = [
@@ -3347,6 +3349,44 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      // ── /setup-signals ──
+      if (commandName === 'setup-signals') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+
+        const everyoneRole = guild.roles.everyone;
+        const overwrites = [
+          { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+          { id: PREMIUM_SIGNAL_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+          { id: STAFF_ROLE_IDS[0], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+          { id: STAFF_ROLE_IDS[1], allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+        ];
+
+        let signalsCat = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && c.name === '📡 SIGNALS');
+        if (!signalsCat) {
+          signalsCat = await guild.channels.create({
+            name: '📡 SIGNALS',
+            type: ChannelType.GuildCategory,
+            permissionOverwrites: overwrites,
+          });
+        }
+
+        let signalsCh = guild.channels.cache.find(c => c.name === 'signals' && c.parentId === signalsCat.id);
+        if (!signalsCh) {
+          signalsCh = await guild.channels.create({
+            name: 'signals',
+            type: ChannelType.GuildText,
+            parent: signalsCat.id,
+            permissionOverwrites: overwrites,
+            topic: 'Live trading signals — Premium Signal access only.',
+          });
+        }
+
+        await interaction.editReply({ content: `✅ Signals set up!\n**Category:** ${signalsCat.name}\n**Channel:** <#${signalsCh.id}>\n**Role:** <@&${PREMIUM_SIGNAL_ROLE_ID}>` });
+        return;
+      }
+
       // ── /setup-vc-alerts ──
       if (commandName === 'setup-vc-alerts') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
@@ -3996,7 +4036,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const parts = customId.split('_');
         // format: assign_vol_vol1_USERID → parts[2]=vol1, parts[3]=USERID
-        const volKey = parts[2] === 'vol1' ? 'Vol I' : parts[2] === 'vol2' ? 'Vol II' : 'Vol III';
+        const assignVolKeyMap = { vol1: 'Vol I', vol2: 'Vol II', vol3: 'Vol III', vol4: 'Vol IV' };
+        const volKey = assignVolKeyMap[parts[2]] || 'Vol III';
         const targetUserId = parts[3];
         const roleId = VOLUME_ROLES[volKey].id;
 
@@ -4225,6 +4266,7 @@ client.on(Events.InteractionCreate, async interaction => {
         new ButtonBuilder().setCustomId(`assign_vol_vol1_${member.user.id}`).setLabel('Vol I').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`assign_vol_vol2_${member.user.id}`).setLabel('Vol II').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`assign_vol_vol3_${member.user.id}`).setLabel('Vol III').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`assign_vol_vol4_${member.user.id}`).setLabel('Vol IV').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`close_ticket_${member.user.id}`).setLabel('Close').setStyle(ButtonStyle.Danger),
       );
 

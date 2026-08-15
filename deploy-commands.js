@@ -183,6 +183,10 @@ const commands = [
     .setDescription('Create Admin category + mod-log channel and start logging all server events (staff only)'),
 
   new SlashCommandBuilder()
+    .setName('setup-signals')
+    .setDescription('Create the hidden Signals category + channel, gated to Premium Signal role (staff only)'),
+
+  new SlashCommandBuilder()
     .setName('setup-sweep-alerts')
     .setDescription('Create Sweep Alerts role, channels, and self-assign button (staff only)'),
 
