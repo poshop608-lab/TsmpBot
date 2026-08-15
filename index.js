@@ -4265,49 +4265,6 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
 
-      // ── Video access request: direct from the GBT channel's Get Access message ──
-      // Same gate as resource_access_ (any Volume role or staff). Opens the
-      // thread itself natively instead of round-tripping through the worker,
-      // since this click already happens inside the guild.
-      if (customId === 'video_request_gbtime_direct' || customId === 'video_request_po3_direct') {
-        await interaction.deferReply({ ephemeral: true });
-
-        const hasVolume = Object.values(VOLUME_ROLES).some(v => member.roles.cache.has(v.id));
-        const isStaffMember = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
-        if (!hasVolume && !isStaffMember) {
-          return interaction.editReply({ content: "You're not enrolled yet. Join first, then come back." });
-        }
-
-        const seriesKey = customId === 'video_request_gbtime_direct' ? 'gbtime' : 'po3';
-        const seriesLabel = seriesKey === 'gbtime' ? 'GB Time' : 'PO3 Ranges';
-
-        try {
-          const thread = await interaction.channel.threads.create({
-            name: `video-request-${interaction.user.username}`,
-            autoArchiveDuration: 10080,
-            type: 12,
-            invitable: false,
-            reason: `Video access request from ${interaction.user.tag}`,
-          });
-          await thread.members.add(interaction.user.id).catch(() => {});
-
-          await thread.send({
-            content: `<@&${STAFF_ROLE_IDS[0]}> — <@${interaction.user.id}> requested **${seriesLabel}** videos. Approve to send the Drive link.`,
-            components: [{
-              type: 1,
-              components: [
-                { type: 2, style: 3, label: 'Approve', custom_id: `video_approve_${seriesKey}_${interaction.user.id}` },
-              ],
-            }],
-          });
-
-          await interaction.editReply({ content: `Done — check your thread: ${thread}` });
-        } catch (e) {
-          console.error('[video request direct] error:', e.message);
-          await interaction.editReply({ content: 'Could not open a request thread — try again shortly.' });
-        }
-      }
-
       // ── Video access request: topic pick (GB Time / PO3 Ranges) ──
       // Thread is created by the smp-join worker when someone picks "Videos" on
       // the GBT resource page. This button lives inside that thread — requester
