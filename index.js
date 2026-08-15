@@ -4316,7 +4316,28 @@ client.on(Events.InteractionCreate, async interaction => {
           content: link
             ? `✅ Approved by <@${interaction.user.id}>.\n\n<@${requesterId}> here's your **${seriesLabel}** videos: ${link}`
             : `✅ Approved by <@${interaction.user.id}> — but no Drive link is set for **${seriesLabel}** yet. Staff: add it in the code, then paste it here manually for now.`,
+          components: [{
+            type: 1,
+            components: [
+              { type: 2, style: 4, label: 'Close Ticket', custom_id: `video_close_${requesterId}` },
+            ],
+          }],
         });
+      }
+
+      // ── Video access request: close, no transcript needed ──
+      if (customId.startsWith('video_close_')) {
+        await interaction.deferReply();
+
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        const requesterId = customId.replace('video_close_', '');
+        const isOwner = interaction.user.id === requesterId;
+        if (!isStaff && !isOwner) {
+          return interaction.editReply({ content: 'Only staff or the requester can close this.' });
+        }
+
+        await interaction.editReply({ content: 'Closing…' });
+        await interaction.channel.delete().catch(() => {});
       }
     }
 
