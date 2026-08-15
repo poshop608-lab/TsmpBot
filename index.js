@@ -4234,7 +4234,7 @@ client.on(Events.InteractionCreate, async interaction => {
           'trinity':     'https://smartmoneysequence.com/models/trinity/',
           'gbt':         'https://smartmoneysequence.com/models/gbt/',
         };
-        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model', 'nyam-mech': 'NYAM Mech Model', 'trinity': 'Trinity Framework', 'gbt': 'Goldbach Time' };
+        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model', 'nyam-mech': 'NYAM Mech Model', 'trinity': 'Trinity Framework', 'gbt': 'Goldbach Time & PO3 Ranges' };
 
         if (resource === 'nyam-mech') {
           return interaction.editReply({ content: 'NYAM Mech Model is still in development — not available yet. Check back soon.' });
