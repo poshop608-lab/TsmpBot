@@ -4264,6 +4264,60 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.editReply({ content: 'Could not reach the pass service — try again shortly.' });
         }
       }
+
+      // ── Video access request: topic pick (GB Time / PO3 Ranges) ──
+      // Thread is created by the smp-join worker when someone picks "Videos" on
+      // the GBT resource page. This button lives inside that thread — requester
+      // picks a series, bot shows an Approve button to Founders. No auto-grant:
+      // videos are copyright-sensitive, staff manually approves every request.
+      if (customId.startsWith('video_pick_gbtime_') || customId.startsWith('video_pick_po3_')) {
+        await interaction.deferReply();
+
+        const isGbTime = customId.startsWith('video_pick_gbtime_');
+        const requesterId = customId.replace(isGbTime ? 'video_pick_gbtime_' : 'video_pick_po3_', '');
+        if (interaction.user.id !== requesterId) {
+          return interaction.editReply({ content: 'Only the person who requested access can pick a series.' });
+        }
+
+        const seriesLabel = isGbTime ? 'GB Time' : 'PO3 Ranges';
+        const seriesKey = isGbTime ? 'gbtime' : 'po3';
+
+        await interaction.editReply({
+          content: `<@&${STAFF_ROLE_IDS[0]}> — <@${requesterId}> requested **${seriesLabel}** videos. Approve to send the Drive link.`,
+          components: [{
+            type: 1,
+            components: [
+              { type: 2, style: 3, label: 'Approve', custom_id: `video_approve_${seriesKey}_${requesterId}` },
+            ],
+          }],
+        });
+      }
+
+      // ── Video access request: Founder approval ──
+      if (customId.startsWith('video_approve_')) {
+        await interaction.deferReply();
+
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.editReply({ content: 'Only staff can approve this.' });
+
+        const parts = customId.split('_'); // video_approve_<key>_<userId>
+        const seriesKey = parts[2];
+        const requesterId = parts[3];
+
+        // Placeholder until the real Drive links are provided — update these two.
+        const VIDEO_DRIVE_LINKS = {
+          gbtime: null,
+          po3: null,
+        };
+        const seriesLabel = seriesKey === 'gbtime' ? 'GB Time' : 'PO3 Ranges';
+        const link = VIDEO_DRIVE_LINKS[seriesKey];
+
+        await interaction.editReply({
+          content: link
+            ? `✅ Approved by <@${interaction.user.id}>.\n\n<@${requesterId}> here's your **${seriesLabel}** videos: ${link}`
+            : `✅ Approved by <@${interaction.user.id}> — but no Drive link is set for **${seriesLabel}** yet. Staff: add it in the code, then paste it here manually for now.`,
+        });
+      }
     }
 
     // ── Modal submit — access intake ──
