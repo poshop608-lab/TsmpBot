@@ -3305,6 +3305,53 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ embeds: [embed], files: [file] });
       }
 
+      // ── /purge-channel ──
+      // Wipes every message in the channel it's run in (or a named channel).
+      // Bulk-deletes in batches of 100 for anything under 14 days old; anything
+      // older than that Discord's bulk endpoint rejects, so those fall back to
+      // one-by-one deletes with a small delay to respect the per-message rate limit.
+      if (commandName === 'purge-channel') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetCh = interaction.options.getChannel('channel') || interaction.channel;
+        let totalDeleted = 0;
+
+        try {
+          while (true) {
+            const batch = await targetCh.messages.fetch({ limit: 100 });
+            if (batch.size === 0) break;
+
+            const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+            const bulkable = batch.filter(m => m.createdTimestamp > fourteenDaysAgo);
+            const old = batch.filter(m => m.createdTimestamp <= fourteenDaysAgo);
+
+            if (bulkable.size > 1) {
+              await targetCh.bulkDelete(bulkable, true);
+              totalDeleted += bulkable.size;
+            } else if (bulkable.size === 1) {
+              await bulkable.first().delete().catch(() => {});
+              totalDeleted += 1;
+            }
+
+            for (const msg of old.values()) {
+              await msg.delete().catch(() => {});
+              totalDeleted += 1;
+              await new Promise(r => setTimeout(r, 350));
+            }
+
+            if (old.size > 0 && bulkable.size === 0) break; // avoid infinite loop if only old msgs remain and none deletable
+            if (batch.size < 100) break;
+          }
+        } catch (e) {
+          console.error('[purge-channel] error:', e.message);
+          return interaction.editReply({ content: `Stopped after deleting ${totalDeleted} messages — hit an error: ${e.message}` });
+        }
+
+        return interaction.editReply({ content: `✅ Purged ${totalDeleted} messages from <#${targetCh.id}>.` });
+      }
+
       // ── /setup-modlog ──
       if (commandName === 'setup-modlog') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));

@@ -179,6 +179,15 @@ const commands = [
     .setDescription('Generate a permanent server invite link via the bot (staff only)'),
 
   new SlashCommandBuilder()
+    .setName('purge-channel')
+    .setDescription('Delete every message in this channel, or a named channel (staff only)')
+    .addChannelOption(opt =>
+      opt.setName('channel')
+        .setDescription('Channel to purge (defaults to the channel you run this in)')
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
     .setName('setup-modlog')
     .setDescription('Create Admin category + mod-log channel and start logging all server events (staff only)'),
 
