@@ -1393,6 +1393,7 @@ const WELCOME_CH_ID    = '1510297375506436348';
 const ROLES_CH_ID      = '1528332521429925980';
 const TICKETS_CH_ID    = '1510299210371567709';
 const FREE_CHAT_CH_ID  = '1510297377779748994';
+const GENERAL_CH_ID    = '1469213842390253602';
 
 function _buildFreeChatEmbed() {
   return new EmbedBuilder()
@@ -4010,6 +4011,11 @@ client.on(Events.InteractionCreate, async interaction => {
           `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>. Welcome.`
         );
 
+        try {
+          const generalCh = guild.channels.cache.get(GENERAL_CH_ID);
+          if (generalCh) await generalCh.send(`@everyone Welcome In Our New Member <@${targetUserId}>`);
+        } catch (e) { console.warn('General welcome announce error:', e.message); }
+
         // Post welcome card now that member is approved
         try {
           const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
@@ -4069,6 +4075,11 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.channel.send(
           `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>.${roleId ? '' : ' (Vol IV role not yet created — Mentee only.)'} Welcome.`
         );
+
+        try {
+          const generalCh = guild.channels.cache.get(GENERAL_CH_ID);
+          if (generalCh) await generalCh.send(`@everyone Welcome In Our New Member <@${targetUserId}>`);
+        } catch (e) { console.warn('General welcome announce error:', e.message); }
 
         try {
           const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
