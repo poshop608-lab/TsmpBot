@@ -4304,12 +4304,14 @@ client.on(Events.InteractionCreate, async interaction => {
         const seriesKey = parts[2];
         const requesterId = parts[3];
 
-        // Placeholder until the real Drive links are provided — update these two.
+        // Placeholder until the real Drive links are provided — update these.
         const VIDEO_DRIVE_LINKS = {
           gbtime: null,
           po3: null,
+          model22: null,
         };
-        const seriesLabel = seriesKey === 'gbtime' ? 'GB Time' : 'PO3 Ranges';
+        const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined' };
+        const seriesLabel = VIDEO_SERIES_LABELS[seriesKey] || seriesKey;
         const link = VIDEO_DRIVE_LINKS[seriesKey];
 
         await interaction.editReply({
