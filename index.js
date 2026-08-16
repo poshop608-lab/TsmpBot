@@ -4307,8 +4307,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // Placeholder until the real Drive links are provided — update these.
         const VIDEO_DRIVE_LINKS = {
-          gbtime: null,
-          po3: null,
+          gbtime: 'https://drive.google.com/drive/folders/1Hj2fUcis953mBWRBQ6nL_aiy_al2vj8Q?usp=drive_link',
+          po3: 'https://drive.google.com/drive/folders/1d5sGeSKNkGMfTWpI0eQMzEZ-R9epS8hL?usp=drive_link',
           model22: 'https://1drv.ms/f/c/347c2f5edb3cd159/IgAgsivVreIsQYmvNWCmIFfKAazhNEpTC0suSGFWRMRAVxg?e=503cOV',
         };
         const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined' };
