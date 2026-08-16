@@ -4308,7 +4308,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const VIDEO_DRIVE_LINKS = {
           gbtime: null,
           po3: null,
-          model22: null,
+          model22: 'https://1drv.ms/f/c/347c2f5edb3cd159/IgAgsivVreIsQYmvNWCmIFfKAazhNEpTC0suSGFWRMRAVxg?e=503cOV',
         };
         const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined' };
         const seriesLabel = VIDEO_SERIES_LABELS[seriesKey] || seriesKey;
