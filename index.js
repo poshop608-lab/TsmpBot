@@ -4229,12 +4229,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const resource = customId.startsWith('resource_access_') ? customId.replace('resource_access_', '') : null;
         const RESOURCE_LINKS = {
-          'asia-mech':   'https://smartmoneysequence.com/models/asia-mech/',
-          'london-mech': 'https://smartmoneysequence.com/models/london-mech/',
-          'trinity':     'https://smartmoneysequence.com/models/trinity/',
-          'gbt':         'https://smartmoneysequence.com/models/gbt/',
+          'asia-mech':      'https://smartmoneysequence.com/models/asia-mech/',
+          'london-mech':    'https://smartmoneysequence.com/models/london-mech/',
+          'trinity':        'https://smartmoneysequence.com/models/trinity/',
+          'gbt':            'https://smartmoneysequence.com/models/gbt/',
+          'news-protocols': 'https://smartmoneysequence.com/models/news-protocols/',
         };
-        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model', 'nyam-mech': 'NYAM Mech Model', 'trinity': 'Trinity Framework', 'gbt': 'Goldbach Time & PO3 Ranges', 'model22': '22 Model Refined' };
+        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model', 'nyam-mech': 'NYAM Mech Model', 'trinity': 'Trinity Framework', 'gbt': 'Goldbach Time & PO3 Ranges', 'model22': '22 Model Refined', 'news-protocols': 'News Protocols' };
 
         if (resource === 'nyam-mech') {
           return interaction.editReply({ content: 'NYAM Mech Model is still in development — not available yet. Check back soon.' });
