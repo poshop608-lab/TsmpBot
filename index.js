@@ -1502,6 +1502,43 @@ let MOD_LOG_CH_ID      = '1537544874063171645';  // #mod-log channel — hardcod
 let VC_ALERT_ROLE_ID   = null;  // 📅 VC Alerts role
 let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 
+// ── Vol I weekly live-session quota ──
+// Vol I gets 3 of 5 weekly Live Trading / Market Review sessions; Vol II/III/IV
+// are unlimited. Counter is in-memory only (resets on restart same as it resets
+// weekly anyway) — not worth persisting since a lost count just means a free
+// extra session at worst, and it's naturally rebuilt across the week.
+const VOL1_QUOTA_VC_IDS = ['1469213842390253603', '1470461977745952932']; // Live Trading, Market Review
+const VOL1_WEEKLY_LIMIT = 3;
+const vol1WeeklyJoins = new Map(); // userId -> { weekKey: string, count: number }
+
+function _getEtWeekKey(date = new Date()) {
+  // Week "key" = the most recent Sunday 00:00 ET, as an ISO date string.
+  // Two joins in the same reset window always produce the same key.
+  const et = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dow = et.getDay(); // 0 = Sunday
+  const sunday = new Date(et);
+  sunday.setDate(et.getDate() - dow);
+  sunday.setHours(0, 0, 0, 0);
+  return sunday.toISOString().slice(0, 10);
+}
+
+function _vol1JoinCount(userId) {
+  const key = _getEtWeekKey();
+  const entry = vol1WeeklyJoins.get(userId);
+  if (!entry || entry.weekKey !== key) return 0;
+  return entry.count;
+}
+
+function _vol1RecordJoin(userId) {
+  const key = _getEtWeekKey();
+  const entry = vol1WeeklyJoins.get(userId);
+  if (!entry || entry.weekKey !== key) {
+    vol1WeeklyJoins.set(userId, { weekKey: key, count: 1 });
+  } else {
+    entry.count += 1;
+  }
+}
+
 // active countdown: { messageId, vcChannelName, sessionNote, host, startEpoch, intervalId, warned15 }
 let _vcCountdown = null;
 
@@ -5073,6 +5110,35 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
       { name: 'To', value: newState.channel?.name || '?', inline: true },
     ], user));
   }
+});
+
+// Vol I weekly live-session quota (3 of 5 Live Trading / Market Review per week)
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  // Only care about a fresh join (not a leave or a move between non-tracked channels)
+  if (oldState.channelId === newState.channelId) return;
+  if (!newState.channelId || !VOL1_QUOTA_VC_IDS.includes(newState.channelId)) return;
+
+  const member = newState.member;
+  if (!member || member.user.bot) return;
+
+  const hasVol1 = member.roles.cache.has(VOLUME_ROLES['Vol I'].id);
+  const hasHigherVol = ['Vol II', 'Vol III', 'Vol IV'].some(k => member.roles.cache.has(VOLUME_ROLES[k].id));
+  const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
+  if (!hasVol1 || hasHigherVol || isStaff) return; // only strictly Vol I gets limited
+
+  const count = _vol1JoinCount(member.id);
+  if (count >= VOL1_WEEKLY_LIMIT) {
+    await newState.disconnect('Vol I weekly live-session limit reached').catch(() => {});
+    try {
+      await member.send(
+        `You've used your ${VOL1_WEEKLY_LIMIT} live sessions for this week (Live Trading + Market Review combined). ` +
+        `Your quota resets Sunday at midnight ET. See you at the next one!`
+      );
+    } catch {}
+    return;
+  }
+
+  _vol1RecordJoin(member.id);
 });
 
 // Invite create
