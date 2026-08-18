@@ -4315,10 +4315,30 @@ client.on(Events.InteractionCreate, async interaction => {
         const seriesLabel = VIDEO_SERIES_LABELS[seriesKey] || seriesKey;
         const link = VIDEO_DRIVE_LINKS[seriesKey];
 
+        if (!link) {
+          return interaction.editReply({
+            content: `⚠️ No Drive link is set for **${seriesLabel}** yet. Staff: add it in the code, then paste it here manually for now.`,
+            components: [{
+              type: 1,
+              components: [
+                { type: 2, style: 4, label: 'Close Ticket', custom_id: `video_close_${requesterId}` },
+              ],
+            }],
+          });
+        }
+
+        let dmSent = true;
+        try {
+          const requesterMember = await interaction.guild.members.fetch(requesterId);
+          await requesterMember.send(`✅ Your **${seriesLabel}** request was approved — here's the link: ${link}`);
+        } catch (e) {
+          dmSent = false;
+        }
+
         await interaction.editReply({
-          content: link
-            ? `✅ Approved by <@${interaction.user.id}>.\n\n<@${requesterId}> here's your **${seriesLabel}** videos: ${link}`
-            : `✅ Approved by <@${interaction.user.id}> — but no Drive link is set for **${seriesLabel}** yet. Staff: add it in the code, then paste it here manually for now.`,
+          content: dmSent
+            ? `✅ Approved by <@${interaction.user.id}>. DM sent to <@${requesterId}> with the **${seriesLabel}** link.`
+            : `⚠️ Approved by <@${interaction.user.id}>, but could not DM <@${requesterId}> (DMs likely closed). Send it manually: ${link}`,
           components: [{
             type: 1,
             components: [
