@@ -1509,7 +1509,9 @@ let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 // extra session at worst, and it's naturally rebuilt across the week.
 const VOL1_QUOTA_VC_IDS = ['1469213842390253603', '1470461977745952932']; // Live Trading, Market Review
 const VOL1_WEEKLY_LIMIT = 3;
+const ONE_ON_ONE_ROLE_ID = '1539004461299539978'; // exempt from the quota entirely
 const vol1WeeklyJoins = new Map(); // userId -> { weekKey: string, count: number }
+const vol1WeeklyBonus = new Map(); // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
 
 function _getEtWeekKey(date = new Date()) {
   // Week "key" = the most recent Sunday 00:00 ET, as an ISO date string.
@@ -1527,6 +1529,18 @@ function _vol1JoinCount(userId) {
   const entry = vol1WeeklyJoins.get(userId);
   if (!entry || entry.weekKey !== key) return 0;
   return entry.count;
+}
+
+function _vol1Bonus(userId) {
+  const key = _getEtWeekKey();
+  const entry = vol1WeeklyBonus.get(userId);
+  if (!entry || entry.weekKey !== key) return 0;
+  return entry.bonus;
+}
+
+function _vol1SetBonus(userId, bonus) {
+  const key = _getEtWeekKey();
+  vol1WeeklyBonus.set(userId, { weekKey: key, bonus });
 }
 
 function _vol1RecordJoin(userId) {
@@ -3389,6 +3403,25 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Purged ${totalDeleted} messages from <#${targetCh.id}>.` });
       }
 
+      // ── /vol1-override ──
+      // Grants a specific Vol I member extra live sessions for the current
+      // week only (e.g. bump them to 4/5 or 5/5). Resets along with everyone
+      // else's count at the next Sunday 00:00 ET rollover.
+      if (commandName === 'vol1-override') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        const targetUser = interaction.options.getUser('member');
+        const extra = interaction.options.getInteger('extra_sessions');
+        _vol1SetBonus(targetUser.id, extra);
+
+        const newLimit = VOL1_WEEKLY_LIMIT + extra;
+        return interaction.reply({
+          content: `✅ <@${targetUser.id}> can now attend ${newLimit}/5 sessions this week (base ${VOL1_WEEKLY_LIMIT} + ${extra} bonus). Resets Sunday 00:00 ET.`,
+          ephemeral: true,
+        });
+      }
+
       // ── /setup-modlog ──
       if (commandName === 'setup-modlog') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
@@ -5124,14 +5157,16 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   const hasVol1 = member.roles.cache.has(VOLUME_ROLES['Vol I'].id);
   const hasHigherVol = ['Vol II', 'Vol III', 'Vol IV'].some(k => member.roles.cache.has(VOLUME_ROLES[k].id));
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
-  if (!hasVol1 || hasHigherVol || isStaff) return; // only strictly Vol I gets limited
+  const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
+  if (!hasVol1 || hasHigherVol || isStaff || isOneOnOne) return; // only strictly Vol I (no 1-on-1) gets limited
 
+  const limit = VOL1_WEEKLY_LIMIT + _vol1Bonus(member.id);
   const count = _vol1JoinCount(member.id);
-  if (count >= VOL1_WEEKLY_LIMIT) {
+  if (count >= limit) {
     await newState.disconnect('Vol I weekly live-session limit reached').catch(() => {});
     try {
       await member.send(
-        `You've used your ${VOL1_WEEKLY_LIMIT} live sessions for this week (Live Trading + Market Review combined). ` +
+        `You've used your ${limit} live session${limit === 1 ? '' : 's'} for this week (Live Trading + Market Review combined). ` +
         `Your quota resets Sunday at midnight ET. See you at the next one!`
       );
     } catch {}
