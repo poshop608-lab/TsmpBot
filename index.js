@@ -1518,7 +1518,7 @@ let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 const VOL1_QUOTA_VC_IDS = ['1469213842390253603', '1470461977745952932']; // Live Trading, Market Review
 const VOL1_WEEKLY_LIMIT = 3;
 const VOL1_MIN_STAY_MS = 5 * 60 * 1000;      // must stay 5 min before it counts
-const VOL1_SESSION_GRACE_MS = 2 * 60 * 1000; // rejoin within 2 min = same session
+const VOL1_SESSION_GRACE_MS = 10 * 60 * 1000; // rejoin within 10 min = same session
 const ONE_ON_ONE_ROLE_ID = '1539004461299539978'; // exempt from the quota entirely
 const vol1WeeklyJoins = new Map();  // userId -> { weekKey: string, count: number }
 const vol1WeeklyBonus = new Map();  // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
