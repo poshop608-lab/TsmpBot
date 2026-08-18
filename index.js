@@ -1396,6 +1396,17 @@ const FREE_CHAT_CH_ID  = '1510297377779748994';
 const GENERAL_CH_ID    = '1469213842390253602';
 const PREMIUM_SIGNAL_ROLE_ID = '1538203144868208680';
 
+// ── Daily opening-range poll (Mon-Fri, 9:15 AM ET post, 9:29 AM ET reveal) ──
+// discord.js on this version predates native Poll support, so it's built as
+// a plain embed + 3 buttons with an in-memory vote tally, same pattern as
+// every other button-driven feature in this file.
+const OR_POLL_OPTIONS = [
+  { key: 'pump',  label: 'Pump',  emoji: '📈' },
+  { key: 'dump',  label: 'Dump',  emoji: '📉' },
+  { key: 'judas', label: 'Judas Swing', emoji: '🔀' },
+];
+let orPollState = null; // { messageId, votes: Map<userId, key> }
+
 function _buildFreeChatEmbed() {
   return new EmbedBuilder()
     .setColor(0x2b2d31)
@@ -1508,22 +1519,19 @@ let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 // weekly anyway) — not worth persisting since a lost count just means a free
 // extra session at worst, and it's naturally rebuilt across the week.
 //
-// Two anti-abuse rules so join/leave/rejoin spam can't burn multiple sessions
-// in seconds:
-//   1. MIN_STAY — a join only counts once they've stayed MIN_STAY_MS. If they
-//      leave before that, nothing is recorded at all.
-//   2. SESSION_GRACE — a rejoin within SESSION_GRACE_MS of their last leave is
-//      treated as continuing the same session (e.g. a dropped connection or
-//      a quick channel bounce), not a new one.
+// Attendance is cumulative connected time, not join-count: every join/leave
+// stretch adds its duration to a running total for the week. Once that total
+// crosses a multiple of VOL1_SESSION_MINUTES, one more session is marked
+// attended — however many times they hopped in and out to get there. This
+// makes join/leave/rejoin spam pointless: 5 one-minute hops and one
+// continuous 15-minute sit both just add up to the same 15 minutes.
 const VOL1_QUOTA_VC_IDS = ['1469213842390253603', '1470461977745952932']; // Live Trading, Market Review
 const VOL1_WEEKLY_LIMIT = 3;
-const VOL1_MIN_STAY_MS = 5 * 60 * 1000;      // must stay 5 min before it counts
-const VOL1_SESSION_GRACE_MS = 10 * 60 * 1000; // rejoin within 10 min = same session
+const VOL1_SESSION_MINUTES = 15; // cumulative minutes in VC = 1 attended session
 const ONE_ON_ONE_ROLE_ID = '1539004461299539978'; // exempt from the quota entirely
-const vol1WeeklyJoins = new Map();  // userId -> { weekKey: string, count: number }
-const vol1WeeklyBonus = new Map();  // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
-const vol1PendingStay = new Map();  // userId -> { timer, channelId } — armed while waiting out MIN_STAY
-const vol1LastLeave = new Map();    // userId -> { timestamp, channelId } — for the grace-window check
+const vol1WeeklyMinutes = new Map(); // userId -> { weekKey: string, minutes: number, sessionsCounted: number }
+const vol1WeeklyBonus = new Map();   // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
+const vol1ActiveJoin = new Map();    // userId -> timestamp of their current join, while connected to a tracked VC
 
 function _getEtWeekKey(date = new Date()) {
   // Week "key" = the most recent Sunday 00:00 ET, as an ISO date string.
@@ -1536,11 +1544,11 @@ function _getEtWeekKey(date = new Date()) {
   return sunday.toISOString().slice(0, 10);
 }
 
-function _vol1JoinCount(userId) {
+function _vol1SessionsAttended(userId) {
   const key = _getEtWeekKey();
-  const entry = vol1WeeklyJoins.get(userId);
+  const entry = vol1WeeklyMinutes.get(userId);
   if (!entry || entry.weekKey !== key) return 0;
-  return entry.count;
+  return entry.sessionsCounted;
 }
 
 function _vol1Bonus(userId) {
@@ -1555,14 +1563,22 @@ function _vol1SetBonus(userId, bonus) {
   vol1WeeklyBonus.set(userId, { weekKey: key, bonus });
 }
 
-function _vol1RecordJoin(userId) {
+// Adds elapsed connected time to the user's weekly cumulative total, then
+// recalculates how many VOL1_SESSION_MINUTES blocks that total has crossed.
+// Returns true if this call caused a NEW session to be counted (i.e. they
+// just crossed another 15-minute threshold) — used to decide whether to
+// disconnect them right at the moment they hit the limit.
+function _vol1AddMinutes(userId, minutesElapsed) {
   const key = _getEtWeekKey();
-  const entry = vol1WeeklyJoins.get(userId);
+  let entry = vol1WeeklyMinutes.get(userId);
   if (!entry || entry.weekKey !== key) {
-    vol1WeeklyJoins.set(userId, { weekKey: key, count: 1 });
-  } else {
-    entry.count += 1;
+    entry = { weekKey: key, minutes: 0, sessionsCounted: 0 };
+    vol1WeeklyMinutes.set(userId, entry);
   }
+  const before = entry.sessionsCounted;
+  entry.minutes += minutesElapsed;
+  entry.sessionsCounted = Math.floor(entry.minutes / VOL1_SESSION_MINUTES);
+  return entry.sessionsCounted > before;
 }
 
 // active countdown: { messageId, vcChannelName, sessionNote, host, startEpoch, intervalId, warned15 }
@@ -4444,6 +4460,22 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.editReply({ content: 'Closing…' });
         await interaction.channel.delete().catch(() => {});
       }
+
+      // ── Daily opening-range poll: cast/change vote ──
+      if (customId.startsWith('orpoll_vote_')) {
+        if (!orPollState || interaction.message.id !== orPollState.messageId) {
+          return interaction.reply({ content: 'This poll has closed.', ephemeral: true });
+        }
+        const choice = customId.replace('orpoll_vote_', '');
+        orPollState.votes.set(interaction.user.id, choice);
+
+        const row = new ActionRowBuilder().addComponents(
+          OR_POLL_OPTIONS.map(opt =>
+            new ButtonBuilder().setCustomId(`orpoll_vote_${opt.key}`).setLabel(opt.label).setEmoji(opt.emoji).setStyle(ButtonStyle.Secondary)
+          )
+        );
+        await interaction.update({ embeds: [_orPollEmbed(orPollState.votes, false)], components: [row] });
+      }
     }
 
     // ── Modal submit — access intake ──
@@ -5173,54 +5205,145 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   const leftTracked = oldState.channelId && VOL1_QUOTA_VC_IDS.includes(oldState.channelId);
   const joinedTracked = newState.channelId && VOL1_QUOTA_VC_IDS.includes(newState.channelId);
 
-  // Left a tracked VC (or moved out of one) — cancel any pending min-stay timer
-  // (they didn't stay long enough for it to count) and remember when, for the
-  // grace-window check on their next join.
+  // Left a tracked VC (or moved to a non-tracked one) — bank the elapsed time
+  // from their active join into the weekly cumulative total.
   if (leftTracked) {
-    const pending = vol1PendingStay.get(member.id);
-    if (pending) { clearTimeout(pending.timer); vol1PendingStay.delete(member.id); }
-    vol1LastLeave.set(member.id, { timestamp: Date.now(), channelId: oldState.channelId });
+    const joinedAt = vol1ActiveJoin.get(member.id);
+    vol1ActiveJoin.delete(member.id);
+    if (joinedAt) {
+      const minutesElapsed = (Date.now() - joinedAt) / 60000;
+      _vol1AddMinutes(member.id, minutesElapsed);
+    }
   }
 
   if (!joinedTracked) return;
 
-  // Enforce the limit up front so someone already at quota can't even start
-  // a new pending-stay timer.
+  // Enforce the limit up front — if their banked cumulative time already
+  // covers the full limit, they don't get back in at all.
   const limit = VOL1_WEEKLY_LIMIT + _vol1Bonus(member.id);
-  const count = _vol1JoinCount(member.id);
-  if (count >= limit) {
+  const attended = _vol1SessionsAttended(member.id);
+  if (attended >= limit) {
     await newState.disconnect('Vol I weekly live-session limit reached').catch(() => {});
     try {
       await member.send(
-        `You've used your ${limit} live session${limit === 1 ? '' : 's'} for this week (Live Trading + Market Review combined). ` +
+        `You've used your ${limit} live session${limit === 1 ? '' : 's'} for this week (${VOL1_SESSION_MINUTES} min each, Live Trading + Market Review combined). ` +
         `Your quota resets Sunday at midnight ET. See you at the next one!`
       );
     } catch {}
     return;
   }
 
-  // Rejoining within the grace window continues their last session instead of
-  // starting a new stay-timer — join/leave/rejoin spam can't burn quota, and
-  // someone who got disconnected by a bad connection doesn't lose their spot.
-  const lastLeave = vol1LastLeave.get(member.id);
-  if (lastLeave && VOL1_QUOTA_VC_IDS.includes(lastLeave.channelId) && (Date.now() - lastLeave.timestamp) < VOL1_SESSION_GRACE_MS) {
-    return;
+  // Start the clock on this stretch of connected time.
+  vol1ActiveJoin.set(member.id, Date.now());
+});
+
+// Vol I quota: catch someone crossing their limit WHILE still connected
+// (rather than only when they leave), so they get disconnected the moment
+// their cumulative time hits the cap instead of being able to keep sitting
+// in the VC indefinitely once they've technically used up their sessions.
+setInterval(async () => {
+  for (const [userId, joinedAt] of vol1ActiveJoin.entries()) {
+    const minutesElapsed = (Date.now() - joinedAt) / 60000;
+    if (minutesElapsed < VOL1_SESSION_MINUTES) continue; // hasn't crossed a new threshold yet, cheap early-out
+
+    for (const guild of client.guilds.cache.values()) {
+      const member = await guild.members.fetch(userId).catch(() => null);
+      if (!member?.voice?.channelId || !VOL1_QUOTA_VC_IDS.includes(member.voice.channelId)) continue;
+
+      const limit = VOL1_WEEKLY_LIMIT + _vol1Bonus(userId);
+      const projectedAttended = _vol1SessionsAttended(userId) + Math.floor(minutesElapsed / VOL1_SESSION_MINUTES);
+      if (projectedAttended < limit) continue;
+
+      // Bank the time up to now, then disconnect — same accounting the leave
+      // handler would have done, just triggered proactively instead of
+      // waiting for them to leave on their own.
+      _vol1AddMinutes(userId, minutesElapsed);
+      vol1ActiveJoin.delete(userId);
+      await member.voice.disconnect('Vol I weekly live-session limit reached').catch(() => {});
+      try {
+        await member.send(
+          `You've used your ${limit} live session${limit === 1 ? '' : 's'} for this week (${VOL1_SESSION_MINUTES} min each, Live Trading + Market Review combined). ` +
+          `Your quota resets Sunday at midnight ET. See you at the next one!`
+        );
+      } catch {}
+    }
+  }
+}, 60 * 1000);
+
+// ── Daily opening-range poll scheduler ──
+// Checks the current ET minute every tick; fires post/reveal once per
+// matching minute using a date-string guard so a slow tick or restart
+// doesn't cause a double-post within the same day.
+let orPollLastPostDate = null;
+let orPollLastRevealDate = null;
+
+function _orPollEmbed(votes, revealed) {
+  const counts = { pump: 0, dump: 0, judas: 0 };
+  for (const key of votes.values()) counts[key] = (counts[key] || 0) + 1;
+  const total = votes.size;
+
+  const lines = OR_POLL_OPTIONS.map(opt => {
+    const n = counts[opt.key] || 0;
+    const pct = total ? Math.round((n / total) * 100) : 0;
+    return `${opt.emoji} **${opt.label}** — ${n} vote${n === 1 ? '' : 's'} (${pct}%)`;
+  }).join('\n');
+
+  return new EmbedBuilder()
+    .setColor(revealed ? 0xfbbf24 : 0x38bdf8)
+    .setTitle(revealed ? '🔔 Opening Range — Here It Comes' : '📊 Opening Range Call')
+    .setDescription(
+      (revealed
+        ? `NYSE opens in 1 minute. Votes are locked.\n\n`
+        : `NY market opens at 9:30 AM ET. Where's the opening range going?\n\n`) + lines
+    )
+    .setFooter({ text: revealed ? 'Good luck out there.' : `${total} vote${total === 1 ? '' : 's'} so far — polls lock at 9:29 AM ET` })
+    .setTimestamp();
+}
+
+setInterval(async () => {
+  const nyNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dow = nyNow.getDay(); // 0 = Sun, 6 = Sat
+  if (dow === 0 || dow === 6) return; // Mon-Fri only
+  const hh = nyNow.getHours();
+  const mm = nyNow.getMinutes();
+  const dateKey = nyNow.toISOString().slice(0, 10);
+
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+
+  // 9:15 AM ET — post the poll
+  if (hh === 9 && mm === 15 && orPollLastPostDate !== dateKey) {
+    orPollLastPostDate = dateKey;
+    const ch = guild.channels.cache.get(GENERAL_CH_ID);
+    if (!ch) return;
+
+    const votes = new Map();
+    const row = new ActionRowBuilder().addComponents(
+      OR_POLL_OPTIONS.map(opt =>
+        new ButtonBuilder().setCustomId(`orpoll_vote_${opt.key}`).setLabel(opt.label).setEmoji(opt.emoji).setStyle(ButtonStyle.Secondary)
+      )
+    );
+    const msg = await ch.send({ embeds: [_orPollEmbed(votes, false)], components: [row] }).catch(() => null);
+    if (msg) orPollState = { messageId: msg.id, votes };
   }
 
-  // Fresh session — arm a min-stay timer. Only counts against quota if they're
-  // still connected to a tracked VC when it fires.
-  const existingPending = vol1PendingStay.get(member.id);
-  if (existingPending) clearTimeout(existingPending.timer);
-
-  const timer = setTimeout(async () => {
-    vol1PendingStay.delete(member.id);
-    const freshState = member.voice;
-    if (!freshState?.channelId || !VOL1_QUOTA_VC_IDS.includes(freshState.channelId)) return; // left before it counted
-    _vol1RecordJoin(member.id);
-  }, VOL1_MIN_STAY_MS);
-
-  vol1PendingStay.set(member.id, { timer, channelId: newState.channelId });
-});
+  // 9:29 AM ET — reveal, lock voting
+  if (hh === 9 && mm === 29 && orPollLastRevealDate !== dateKey) {
+    orPollLastRevealDate = dateKey;
+    if (!orPollState) return;
+    const ch = guild.channels.cache.get(GENERAL_CH_ID);
+    const msg = ch ? await ch.messages.fetch(orPollState.messageId).catch(() => null) : null;
+    if (msg) {
+      const lockedRow = new ActionRowBuilder().addComponents(
+        OR_POLL_OPTIONS.map(opt =>
+          new ButtonBuilder().setCustomId(`orpoll_vote_${opt.key}`).setLabel(opt.label).setEmoji(opt.emoji).setStyle(ButtonStyle.Secondary).setDisabled(true)
+        )
+      );
+      await msg.edit({ embeds: [_orPollEmbed(orPollState.votes, true)], components: [lockedRow] }).catch(() => {});
+    }
+    orPollState = null;
+  }
+}, 30 * 1000);
 
 // Invite create
 client.on(Events.InviteCreate, invite => {
