@@ -1507,11 +1507,23 @@ let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 // are unlimited. Counter is in-memory only (resets on restart same as it resets
 // weekly anyway) — not worth persisting since a lost count just means a free
 // extra session at worst, and it's naturally rebuilt across the week.
+//
+// Two anti-abuse rules so join/leave/rejoin spam can't burn multiple sessions
+// in seconds:
+//   1. MIN_STAY — a join only counts once they've stayed MIN_STAY_MS. If they
+//      leave before that, nothing is recorded at all.
+//   2. SESSION_GRACE — a rejoin within SESSION_GRACE_MS of their last leave is
+//      treated as continuing the same session (e.g. a dropped connection or
+//      a quick channel bounce), not a new one.
 const VOL1_QUOTA_VC_IDS = ['1469213842390253603', '1470461977745952932']; // Live Trading, Market Review
 const VOL1_WEEKLY_LIMIT = 3;
+const VOL1_MIN_STAY_MS = 5 * 60 * 1000;      // must stay 5 min before it counts
+const VOL1_SESSION_GRACE_MS = 2 * 60 * 1000; // rejoin within 2 min = same session
 const ONE_ON_ONE_ROLE_ID = '1539004461299539978'; // exempt from the quota entirely
-const vol1WeeklyJoins = new Map(); // userId -> { weekKey: string, count: number }
-const vol1WeeklyBonus = new Map(); // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
+const vol1WeeklyJoins = new Map();  // userId -> { weekKey: string, count: number }
+const vol1WeeklyBonus = new Map();  // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
+const vol1PendingStay = new Map();  // userId -> { timer, channelId } — armed while waiting out MIN_STAY
+const vol1LastLeave = new Map();    // userId -> { timestamp, channelId } — for the grace-window check
 
 function _getEtWeekKey(date = new Date()) {
   // Week "key" = the most recent Sunday 00:00 ET, as an ISO date string.
@@ -5147,11 +5159,9 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 
 // Vol I weekly live-session quota (3 of 5 Live Trading / Market Review per week)
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-  // Only care about a fresh join (not a leave or a move between non-tracked channels)
   if (oldState.channelId === newState.channelId) return;
-  if (!newState.channelId || !VOL1_QUOTA_VC_IDS.includes(newState.channelId)) return;
 
-  const member = newState.member;
+  const member = (newState.member || oldState.member);
   if (!member || member.user.bot) return;
 
   const hasVol1 = member.roles.cache.has(VOLUME_ROLES['Vol I'].id);
@@ -5160,6 +5170,22 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
   if (!hasVol1 || hasHigherVol || isStaff || isOneOnOne) return; // only strictly Vol I (no 1-on-1) gets limited
 
+  const leftTracked = oldState.channelId && VOL1_QUOTA_VC_IDS.includes(oldState.channelId);
+  const joinedTracked = newState.channelId && VOL1_QUOTA_VC_IDS.includes(newState.channelId);
+
+  // Left a tracked VC (or moved out of one) — cancel any pending min-stay timer
+  // (they didn't stay long enough for it to count) and remember when, for the
+  // grace-window check on their next join.
+  if (leftTracked) {
+    const pending = vol1PendingStay.get(member.id);
+    if (pending) { clearTimeout(pending.timer); vol1PendingStay.delete(member.id); }
+    vol1LastLeave.set(member.id, { timestamp: Date.now(), channelId: oldState.channelId });
+  }
+
+  if (!joinedTracked) return;
+
+  // Enforce the limit up front so someone already at quota can't even start
+  // a new pending-stay timer.
   const limit = VOL1_WEEKLY_LIMIT + _vol1Bonus(member.id);
   const count = _vol1JoinCount(member.id);
   if (count >= limit) {
@@ -5173,7 +5199,27 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     return;
   }
 
-  _vol1RecordJoin(member.id);
+  // Rejoining within the grace window continues their last session instead of
+  // starting a new stay-timer — join/leave/rejoin spam can't burn quota, and
+  // someone who got disconnected by a bad connection doesn't lose their spot.
+  const lastLeave = vol1LastLeave.get(member.id);
+  if (lastLeave && VOL1_QUOTA_VC_IDS.includes(lastLeave.channelId) && (Date.now() - lastLeave.timestamp) < VOL1_SESSION_GRACE_MS) {
+    return;
+  }
+
+  // Fresh session — arm a min-stay timer. Only counts against quota if they're
+  // still connected to a tracked VC when it fires.
+  const existingPending = vol1PendingStay.get(member.id);
+  if (existingPending) clearTimeout(existingPending.timer);
+
+  const timer = setTimeout(async () => {
+    vol1PendingStay.delete(member.id);
+    const freshState = member.voice;
+    if (!freshState?.channelId || !VOL1_QUOTA_VC_IDS.includes(freshState.channelId)) return; // left before it counted
+    _vol1RecordJoin(member.id);
+  }, VOL1_MIN_STAY_MS);
+
+  vol1PendingStay.set(member.id, { timer, channelId: newState.channelId });
 });
 
 // Invite create
