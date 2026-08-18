@@ -1496,7 +1496,7 @@ let SWEEP_TC_ROLE_ID   = null;  // 📡 Sweep Alerts role
 let SWEEP_QT_ROLE_ID   = null;  // 📐 QT Theory Alerts role
 let SWEEP_ALERT_CH_ID  = null;  // #📡〢sweep-alerts channel
 let SWEEP_ROLES_CH_ID  = null;  // #🔔〢alert-roles channel
-let MOD_LOG_CH_ID      = null;  // #mod-log channel
+let MOD_LOG_CH_ID      = '1537544874063171645';  // #mod-log channel — hardcoded so it survives process restarts (was reset to null on every Railway redeploy since /setup-modlog only set it in memory, never persisted)
 
 // ── VC Countdown ──
 let VC_ALERT_ROLE_ID   = null;  // 📅 VC Alerts role
