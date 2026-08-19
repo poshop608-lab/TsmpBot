@@ -3469,7 +3469,8 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited.' });
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success)
+          new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger)
         );
 
         const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
@@ -4545,6 +4546,27 @@ client.on(Events.InteractionCreate, async interaction => {
           ephemeral: true,
         });
       }
+
+      // ── Cancel Stream button — host only ──
+      if (customId.startsWith('stream_cancel_')) {
+        const hostId = customId.replace('stream_cancel_', '');
+        if (interaction.user.id !== hostId) {
+          return interaction.reply({ content: 'Only the host who started this stream can cancel it.', ephemeral: true });
+        }
+        if (!activeStream || interaction.message.id !== activeStream.messageId) {
+          return interaction.reply({ content: 'This stream has already ended.', ephemeral: true });
+        }
+
+        activeStream = null;
+        const cancelledEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor(0x6b7280)
+          .setTitle('🛑 Stream Cancelled')
+          .setDescription(`<@${hostId}> cancelled this stream. No sessions were counted.`);
+        const disabledRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Cancelled').setStyle(ButtonStyle.Secondary).setDisabled(true)
+        );
+        return interaction.update({ embeds: [cancelledEmbed], components: [disabledRow] });
+      }
     }
 
     // ── Modal submit — access intake ──
@@ -5024,6 +5046,15 @@ function _mlEmbed(color, title, fields, user) {
 }
 
 // Message deleted
+// Auto-cancel the active stream if its announcement message gets deleted —
+// separate listener from mod-log below since that one skips bot-authored
+// messages, and the stream announcement is posted by the bot itself.
+client.on(Events.MessageDelete, msg => {
+  if (activeStream && msg.id === activeStream.messageId) {
+    activeStream = null;
+  }
+});
+
 client.on(Events.MessageDelete, async msg => {
   if (!MOD_LOG_CH_ID || msg.author?.bot) return;
   const embed = _mlEmbed(0xef4444, '🗑️ Message Deleted', [
