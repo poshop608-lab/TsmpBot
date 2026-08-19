@@ -3449,7 +3449,20 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
         if (activeStream) {
-          return interaction.reply({ content: `A stream is already active in <#${activeStream.vcId}>. It'll auto-end when that VC empties out.`, ephemeral: true });
+          const vcOpt = interaction.options.getChannel('channel');
+          const cancelRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`stream_force_cancel_${vcOpt.id}`)
+              .setLabel('Cancel Active & Start New')
+              .setEmoji('🛑')
+              .setStyle(ButtonStyle.Danger)
+          );
+          return interaction.reply({
+            content: `A stream is already active in <#${activeStream.vcId}> (it should auto-end when that VC empties, but can get stuck if the announcement message was deleted). ` +
+              `Cancel it and start the new one in <#${vcOpt.id}>?`,
+            components: [cancelRow],
+            ephemeral: true,
+          });
         }
 
         const vc = interaction.options.getChannel('channel');
@@ -4604,6 +4617,64 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Cancelled').setStyle(ButtonStyle.Secondary).setDisabled(true)
         );
         return interaction.update({ embeds: [cancelledEmbed], components: [disabledRow] });
+      }
+
+      // ── Force-cancel a stuck stream from /host-stream's conflict prompt,
+      // then immediately post the new stream announcement the user wanted. ──
+      if (customId.startsWith('stream_force_cancel_')) {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        await interaction.deferUpdate();
+
+        const newVcId = customId.replace('stream_force_cancel_', '');
+
+        // Best-effort: mark the old announcement as cancelled if it still exists.
+        if (activeStream) {
+          const oldGeneralCh = interaction.guild.channels.cache.get(GENERAL_CH_ID);
+          const oldMsg = oldGeneralCh ? await oldGeneralCh.messages.fetch(activeStream.messageId).catch(() => null) : null;
+          if (oldMsg) {
+            const cancelledEmbed = EmbedBuilder.from(oldMsg.embeds[0])
+              .setColor(0x6b7280)
+              .setTitle('🛑 Stream Cancelled')
+              .setDescription(`Cancelled by <@${interaction.user.id}> to start a new stream. No sessions were counted.`);
+            const disabledRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Cancelled').setStyle(ButtonStyle.Secondary).setDisabled(true)
+            );
+            await oldMsg.edit({ embeds: [cancelledEmbed], components: [disabledRow] }).catch(() => {});
+          }
+        }
+        activeStream = null;
+
+        // Now post the new stream announcement.
+        const newVc = interaction.guild.channels.cache.get(newVcId);
+        const generalCh = interaction.guild.channels.cache.get(GENERAL_CH_ID);
+        if (!newVc || !generalCh) {
+          return interaction.editReply({ content: 'Old stream cancelled, but could not start the new one — channel not found. Run /host-stream again.', components: [] });
+        }
+
+        const newEmbed = new EmbedBuilder()
+          .setColor(0x38bdf8)
+          .setTitle('🔴 Live Stream Starting')
+          .setDescription(
+            `<@${interaction.user.id}> is about to go live in **${newVc.name}**.\n\n` +
+            `**Click Join VC before entering** — that's what locks in your weekly stream count, and you can't switch or undo it once clicked. ` +
+            `Anyone who joins the voice channel without clicking first gets kicked and asked to come back here.`
+          )
+          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited.' });
+
+        const newRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger)
+        );
+
+        const newMsg = await generalCh.send({ embeds: [newEmbed], components: [newRow] }).catch(() => null);
+        if (!newMsg) {
+          return interaction.editReply({ content: 'Old stream cancelled, but could not post the new announcement. Run /host-stream again.', components: [] });
+        }
+
+        activeStream = { vcId: newVc.id, messageId: newMsg.id, hostId: interaction.user.id, clickedUserIds: new Set() };
+        return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${GENERAL_CH_ID}>, tracking joins for <#${newVc.id}>.`, components: [] });
       }
     }
 
