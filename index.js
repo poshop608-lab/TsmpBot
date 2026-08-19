@@ -5440,12 +5440,46 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   }
 });
 
-// No VC-entry enforcement anymore — /host-stream only tracks quota, it never
-// gates who can join the voice channel. Anyone can join/leave freely at any
-// time, with or without a stream running. Join VC / End Stream buttons exist
-// purely to let members opt in to having a session counted against their
-// weekly limit; the stream itself now only ends via the End Stream button
-// (or /cancel-stream), not by the VC emptying out.
+// Live-stream Join gate: ONLY while a stream is active, and ONLY on the
+// specific VC picked in /host-stream — every other voice channel is always
+// open, gate or no gate. Two ways to get kicked from the tracked VC:
+//   1. Never clicked Join VC on the announcement at all.
+//   2. Clicked it, but their weekly count is already at/over their limit
+//      by the time they actually try to enter (e.g. clicked earlier when
+//      they had room, used up the rest of their quota elsewhere since).
+// The host is always exempt — never gated, never counted.
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  if (!activeStream) return;
+  if (oldState.channelId === newState.channelId) return;
+  if (newState.channelId !== activeStream.vcId) return; // only police the tracked VC
+
+  const member = newState.member;
+  if (!member || member.user.bot) return;
+  if (member.id === activeStream.hostId) return; // host is always exempt
+
+  if (!activeStream.clickedUserIds.has(member.id)) {
+    await newState.disconnect('Must click Join VC on the stream announcement first').catch(() => {});
+    try {
+      await member.send(
+        `You need to click **Join VC** on the stream announcement in <#${GENERAL_CH_ID}> before joining — that's what locks in your weekly stream count. Head there and click it, then rejoin.`
+      );
+    } catch {}
+    return;
+  }
+
+  if (!_streamIsUnlimited(member)) {
+    const limit = STREAM_WEEKLY_LIMIT + _streamBonus(member.id);
+    const used = _streamJoinCount(member.id);
+    if (used > limit) {
+      await newState.disconnect('Weekly live-stream limit reached').catch(() => {});
+      try {
+        await member.send(
+          `You've used your ${limit}/5 streams for this week — quota resets Sunday 00:00 ET. If it's an emergency, contact the owner, or ask about Vol II/III/IV for 5/5.`
+        );
+      } catch {}
+    }
+  }
+});
 
 // ── Daily opening-range poll scheduler ──
 // Checks the current ET minute every tick; fires post/reveal once per
