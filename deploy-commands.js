@@ -213,6 +213,10 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('stream-history')
+    .setDescription('Show past /host-stream sessions with attendance + VC minutes per person (staff only)'),
+
+  new SlashCommandBuilder()
     .setName('host-stream')
     .setDescription('Announce a live stream and post the Join VC gate (staff only)')
     .addChannelOption(opt =>

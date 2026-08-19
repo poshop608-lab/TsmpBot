@@ -1527,7 +1527,19 @@ const ONE_ON_ONE_ROLE_ID = '1539004461299539978';
 const STREAM_WEEKLY_LIMIT = 3; // Vol I only; higher tiers unlimited
 const streamWeeklyJoins = new Map(); // userId -> { weekKey: string, count: number }
 const streamBonus = new Map();       // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
-let activeStream = null; // { vcId, messageId, hostId, clickedUserIds: Set<string> } — null when no stream is live
+let activeStream = null; // { vcId, vcName, messageId, hostId, startedAt, clickedUserIds: Set<string>, vcTimes: Map<userId, { joinedAt, totalMs }> } — null when no stream is live
+const streamHistory = []; // completed (ended, not cancelled) streams: { vcName, hostId, startedAt, endedAt, attendance: [{ userId, ms }] }
+
+function _fmtEt(date) {
+  return date.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+  }) + ' ET';
+}
+
+function _fmtMins(ms) {
+  return `${Math.round(ms / 60000)}m`;
+}
 
 function _getEtWeekKey(date = new Date()) {
   // Week "key" = the most recent Sunday 00:00 ET, as an ISO date string.
@@ -1574,6 +1586,25 @@ function _streamResetQuota(userId) {
 
 function _streamResetAllQuotas() {
   streamWeeklyJoins.clear();
+}
+
+// Closes out anyone still sitting in the VC when the stream ends (they never
+// got a "leave" VoiceStateUpdate), then archives the whole session to history.
+function _streamFinalizeAndLog(stream) {
+  const now = Date.now();
+  for (const [userId, rec] of stream.vcTimes) {
+    if (rec.joinedAt) {
+      rec.totalMs += now - rec.joinedAt;
+      rec.joinedAt = null;
+    }
+  }
+  streamHistory.push({
+    vcName: stream.vcName,
+    hostId: stream.hostId,
+    startedAt: stream.startedAt,
+    endedAt: new Date(now),
+    attendance: [...stream.vcTimes.entries()].map(([userId, rec]) => ({ userId, ms: rec.totalMs })),
+  });
 }
 
 function _streamIsUnlimited(member) {
@@ -3467,6 +3498,48 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: `✅ Reset stream quota to 0/${STREAM_WEEKLY_LIMIT} for everyone this week.`, ephemeral: true });
       }
 
+      // ── /stream-history ──
+      // Shows every past /host-stream session that was ended via End Stream
+      // (cancelled streams are discarded, never logged here) — start/end
+      // time in ET, host, and each attendee's total minutes in that specific
+      // VC while the stream was active.
+      if (commandName === 'stream-history') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        if (!streamHistory.length) {
+          return interaction.reply({ content: 'No completed streams logged yet.', ephemeral: true });
+        }
+
+        const embeds = [];
+        const chunk = [...streamHistory].reverse().slice(0, 10); // most recent first, Discord caps 10 embeds/msg
+        for (const s of chunk) {
+          const lines = s.attendance.length
+            ? s.attendance
+                .sort((a, b) => b.ms - a.ms)
+                .map(a => `<@${a.userId}> — ${_fmtMins(a.ms)}`)
+                .join('\n')
+            : '*No one logged VC time.*';
+
+          embeds.push(
+            new EmbedBuilder()
+              .setColor(0x38bdf8)
+              .setTitle(`🔊 ${s.vcName}`)
+              .setDescription(
+                `Host: <@${s.hostId}>\n` +
+                `${_fmtEt(s.startedAt)} → ${_fmtEt(s.endedAt)}\n\n` +
+                `**Attendance:**\n${lines}`
+              )
+          );
+        }
+
+        return interaction.reply({
+          content: `Showing ${chunk.length} of ${streamHistory.length} logged stream(s), most recent first:`,
+          embeds,
+          ephemeral: true,
+        });
+      }
+
       // ── /host-stream ──
       if (commandName === 'host-stream') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
@@ -3517,7 +3590,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
         if (!msg) return interaction.editReply({ content: 'Could not post the stream announcement.' });
 
-        activeStream = { vcId: vc.id, messageId: msg.id, hostId: interaction.user.id, clickedUserIds: new Set() };
+        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes: new Map() };
         return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}>, tracking joins for <#${vc.id}>.` });
       }
 
@@ -4681,6 +4754,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const disabledRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Ended').setStyle(ButtonStyle.Secondary).setDisabled(true)
         );
+
+        _streamFinalizeAndLog(activeStream);
         activeStream = null;
         return interaction.update({ embeds: [endedEmbed], components: [disabledRow] });
       }
@@ -4740,7 +4815,7 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.editReply({ content: 'Old stream cancelled, but could not post the new announcement. Run /host-stream again.', components: [] });
         }
 
-        activeStream = { vcId: newVc.id, messageId: newMsg.id, hostId: interaction.user.id, clickedUserIds: new Set() };
+        activeStream = { vcId: newVc.id, vcName: newVc.name, messageId: newMsg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes: new Map() };
         return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}>, tracking joins for <#${newVc.id}>.`, components: [] });
       }
     }
@@ -5476,11 +5551,28 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   if (!activeStream) return;
   if (oldState.channelId === newState.channelId) return;
+
+  const member = oldState.member || newState.member;
+  if (!member || member.user.bot) return;
+
+  // Left the tracked VC (or moved out of it) — accrue their time in.
+  if (oldState.channelId === activeStream.vcId && newState.channelId !== activeStream.vcId) {
+    const rec = activeStream.vcTimes.get(member.id);
+    if (rec && rec.joinedAt) {
+      rec.totalMs += Date.now() - rec.joinedAt;
+      rec.joinedAt = null;
+    }
+  }
+
   if (newState.channelId !== activeStream.vcId) return; // only police the tracked VC
 
-  const member = newState.member;
-  if (!member || member.user.bot) return;
-  if (member.id === activeStream.hostId) return; // host is always exempt
+  if (member.id === activeStream.hostId) {
+    // Host is exempt from the gate but still gets their time tracked.
+    const rec = activeStream.vcTimes.get(member.id) || { joinedAt: null, totalMs: 0 };
+    rec.joinedAt = Date.now();
+    activeStream.vcTimes.set(member.id, rec);
+    return;
+  }
 
   if (!activeStream.clickedUserIds.has(member.id)) {
     await newState.disconnect('Must click Join VC on the stream announcement first').catch(() => {});
@@ -5502,8 +5594,13 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
           `You've used your ${limit}/5 streams for this week — quota resets Sunday 00:00 ET. If it's an emergency, contact the owner, or ask about Vol II/III/IV for 5/5.`
         );
       } catch {}
+      return;
     }
   }
+
+  const rec = activeStream.vcTimes.get(member.id) || { joinedAt: null, totalMs: 0 };
+  rec.joinedAt = Date.now();
+  activeStream.vcTimes.set(member.id, rec);
 });
 
 // ── Daily opening-range poll scheduler ──
