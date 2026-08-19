@@ -4503,7 +4503,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const hasVolume = Object.values(VOLUME_ROLES).some(v => member.roles.cache.has(v.id));
         const isStaffMember = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
-        if (!hasVolume && !isStaffMember) {
+        const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
+        if (!hasVolume && !isStaffMember && !isOneOnOne) {
           return interaction.editReply({ content: "You're not enrolled yet. Join first, then come back for your pass." });
         }
 
