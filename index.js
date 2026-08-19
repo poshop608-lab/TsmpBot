@@ -3480,6 +3480,39 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Stream announcement posted in <#${GENERAL_CH_ID}>, tracking joins for <#${vc.id}>.` });
       }
 
+      // ── /cancel-stream ──
+      // Fallback for when the announcement message was deleted before the
+      // Cancel button could be clicked, or before the bot had it cached
+      // (MessageDelete doesn't fire for messages discord.js never cached,
+      // so a manual delete doesn't always clear activeStream on its own).
+      if (commandName === 'cancel-stream') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        if (!activeStream) {
+          return interaction.reply({ content: 'No stream is currently active.', ephemeral: true });
+        }
+
+        const ended = activeStream;
+        activeStream = null;
+
+        // Best-effort: if the message still exists, edit it to show cancelled.
+        const ch = interaction.guild.channels.cache.get(GENERAL_CH_ID);
+        const msg = ch ? await ch.messages.fetch(ended.messageId).catch(() => null) : null;
+        if (msg) {
+          const cancelledEmbed = EmbedBuilder.from(msg.embeds[0])
+            .setColor(0x6b7280)
+            .setTitle('🛑 Stream Cancelled')
+            .setDescription(`Cancelled by <@${interaction.user.id}> via /cancel-stream. No sessions were counted.`);
+          const disabledRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Cancelled').setStyle(ButtonStyle.Secondary).setDisabled(true)
+          );
+          await msg.edit({ embeds: [cancelledEmbed], components: [disabledRow] }).catch(() => {});
+        }
+
+        return interaction.reply({ content: `✅ Stream cancelled — <#${ended.vcId}> is no longer gated.`, ephemeral: true });
+      }
+
       // ── /setup-modlog ──
       if (commandName === 'setup-modlog') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
