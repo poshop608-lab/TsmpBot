@@ -1394,6 +1394,7 @@ const ROLES_CH_ID      = '1528332521429925980';
 const TICKETS_CH_ID    = '1510299210371567709';
 const FREE_CHAT_CH_ID  = '1510297377779748994';
 const GENERAL_CH_ID    = '1469213842390253602';
+const STREAM_ANNOUNCE_CH_ID = '1513619561570898064'; // where /host-stream posts its Join VC announcement
 const PREMIUM_SIGNAL_ROLE_ID = '1538203144868208680';
 
 // ── Daily opening-range poll (Mon-Fri, 9:15 AM ET post, 9:29 AM ET reveal) ──
@@ -3468,8 +3469,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const vc = interaction.options.getChannel('channel');
         await interaction.deferReply({ ephemeral: true });
 
-        const ch = interaction.guild.channels.cache.get(GENERAL_CH_ID);
-        if (!ch) return interaction.editReply({ content: 'General channel not found.' });
+        const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+        if (!ch) return interaction.editReply({ content: 'Stream announcement channel not found.' });
 
         const embed = new EmbedBuilder()
           .setColor(0x38bdf8)
@@ -3494,7 +3495,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!msg) return interaction.editReply({ content: 'Could not post the stream announcement.' });
 
         activeStream = { vcId: vc.id, messageId: msg.id, hostId: interaction.user.id, clickedUserIds: new Set() };
-        return interaction.editReply({ content: `✅ Stream announcement posted in <#${GENERAL_CH_ID}>, tracking joins for <#${vc.id}>.` });
+        return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}>, tracking joins for <#${vc.id}>.` });
       }
 
       // ── /cancel-stream ──
@@ -3519,7 +3520,7 @@ client.on(Events.InteractionCreate, async interaction => {
         activeStream = null;
 
         // Best-effort: if the message still exists, edit it to show cancelled.
-        const ch = interaction.guild.channels.cache.get(GENERAL_CH_ID);
+        const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         const msg = ch ? await ch.messages.fetch(ended.messageId).catch(() => null) : null;
         if (msg) {
           const cancelledEmbed = EmbedBuilder.from(msg.embeds[0])
@@ -4673,8 +4674,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // Best-effort: mark the old announcement as cancelled if it still exists.
         if (activeStream) {
-          const oldGeneralCh = interaction.guild.channels.cache.get(GENERAL_CH_ID);
-          const oldMsg = oldGeneralCh ? await oldGeneralCh.messages.fetch(activeStream.messageId).catch(() => null) : null;
+          const oldAnnounceCh = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+          const oldMsg = oldAnnounceCh ? await oldAnnounceCh.messages.fetch(activeStream.messageId).catch(() => null) : null;
           if (oldMsg) {
             const cancelledEmbed = EmbedBuilder.from(oldMsg.embeds[0])
               .setColor(0x6b7280)
@@ -4690,8 +4691,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // Now post the new stream announcement.
         const newVc = interaction.guild.channels.cache.get(newVcId);
-        const generalCh = interaction.guild.channels.cache.get(GENERAL_CH_ID);
-        if (!newVc || !generalCh) {
+        const announceCh = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+        if (!newVc || !announceCh) {
           return interaction.editReply({ content: 'Old stream cancelled, but could not start the new one — channel not found. Run /host-stream again.', components: [] });
         }
 
@@ -4700,23 +4701,24 @@ client.on(Events.InteractionCreate, async interaction => {
           .setTitle('🔴 Live Stream Starting')
           .setDescription(
             `<@${interaction.user.id}> is about to go live in **${newVc.name}**.\n\n` +
-            `**Click Join VC before entering** — that's what locks in your weekly stream count, and you can't switch or undo it once clicked. ` +
-            `Anyone who joins the voice channel without clicking first gets kicked and asked to come back here.`
+            `Click **Join VC** to lock in this stream toward your weekly count — no undo, no switching once clicked. ` +
+            `Anyone who joins that voice channel without clicking first gets kicked and asked to come back here.`
           )
-          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited.' });
+          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited. Host never needs to click.' });
 
         const newRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger)
+          new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId(`stream_end_${interaction.user.id}`).setLabel('End Stream').setEmoji('⏹️').setStyle(ButtonStyle.Secondary)
         );
 
-        const newMsg = await generalCh.send({ embeds: [newEmbed], components: [newRow] }).catch(() => null);
+        const newMsg = await announceCh.send({ embeds: [newEmbed], components: [newRow] }).catch(() => null);
         if (!newMsg) {
           return interaction.editReply({ content: 'Old stream cancelled, but could not post the new announcement. Run /host-stream again.', components: [] });
         }
 
         activeStream = { vcId: newVc.id, messageId: newMsg.id, hostId: interaction.user.id, clickedUserIds: new Set() };
-        return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${GENERAL_CH_ID}>, tracking joins for <#${newVc.id}>.`, components: [] });
+        return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}>, tracking joins for <#${newVc.id}>.`, components: [] });
       }
     }
 
@@ -5461,7 +5463,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     await newState.disconnect('Must click Join VC on the stream announcement first').catch(() => {});
     try {
       await member.send(
-        `You need to click **Join VC** on the stream announcement in <#${GENERAL_CH_ID}> before joining — that's what locks in your weekly stream count. Head there and click it, then rejoin.`
+        `You need to click **Join VC** on the stream announcement in <#${STREAM_ANNOUNCE_CH_ID}> before joining — that's what locks in your weekly stream count. Head there and click it, then rejoin.`
       );
     } catch {}
     return;
