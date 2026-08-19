@@ -1513,29 +1513,23 @@ let MOD_LOG_CH_ID      = '1537544874063171645';  // #mod-log channel — hardcod
 let VC_ALERT_ROLE_ID   = null;  // 📅 VC Alerts role
 let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 
-// ── Vol I weekly live-session quota ──
-// Vol I gets 3 of 5 weekly Live Trading / Market Review sessions; Vol II/III/IV
-// are unlimited. Counter is in-memory only (resets on restart same as it resets
-// weekly anyway) — not worth persisting since a lost count just means a free
-// extra session at worst, and it's naturally rebuilt across the week.
-//
-// Attendance is cumulative connected time, not join-count: every join/leave
-// stretch adds its duration to a running total for the week. Once that total
-// crosses a multiple of VOL1_SESSION_MINUTES, one more session is marked
-// attended — however many times they hopped in and out to get there. This
-// makes join/leave/rejoin spam pointless: 5 one-minute hops and one
-// continuous 15-minute sit both just add up to the same 15 minutes.
-const VOL1_QUOTA_VC_IDS = ['1469213842390253603', '1470461977745952932']; // Live Trading, Market Review
-const VOL1_WEEKLY_LIMIT = 3;
-const VOL1_SESSION_MINUTES = 15; // cumulative minutes in VC = 1 attended session
-const ONE_ON_ONE_ROLE_ID = '1539004461299539978'; // exempt from the quota entirely
-const vol1WeeklyMinutes = new Map(); // userId -> { weekKey: string, minutes: number, sessionsCounted: number }
-const vol1WeeklyBonus = new Map();   // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
-const vol1ActiveJoin = new Map();    // userId -> timestamp of their current join, while connected to a tracked VC
+// ── Live-stream Join quota (opt-in via /host-stream) ──
+// Old system auto-tracked VC time; replaced with an explicit gate: a Founder
+// runs /host-stream picking the VC, which posts a "Join VC" button. Nobody
+// enters that VC without clicking it first (live-enforced — anyone who slips
+// in without clicking gets kicked immediately, checked on every join). A
+// click both grants VC access AND locks in one weekly Join-quota use for
+// that member — no undo, no switching. Vol I is capped at 3/5 per week;
+// Vol II/III/IV, 1-on-1, and staff are unlimited but still must click to
+// enter (the click is the single gate for everyone, only the quota differs).
+const ONE_ON_ONE_ROLE_ID = '1539004461299539978';
+const STREAM_WEEKLY_LIMIT = 3; // Vol I only; higher tiers unlimited
+const streamWeeklyJoins = new Map(); // userId -> { weekKey: string, count: number }
+const streamBonus = new Map();       // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
+let activeStream = null; // { vcId, messageId, hostId, clickedUserIds: Set<string> } — null when no stream is live
 
 function _getEtWeekKey(date = new Date()) {
   // Week "key" = the most recent Sunday 00:00 ET, as an ISO date string.
-  // Two joins in the same reset window always produce the same key.
   const et = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const dow = et.getDay(); // 0 = Sunday
   const sunday = new Date(et);
@@ -1544,41 +1538,40 @@ function _getEtWeekKey(date = new Date()) {
   return sunday.toISOString().slice(0, 10);
 }
 
-function _vol1SessionsAttended(userId) {
+function _streamJoinCount(userId) {
   const key = _getEtWeekKey();
-  const entry = vol1WeeklyMinutes.get(userId);
+  const entry = streamWeeklyJoins.get(userId);
   if (!entry || entry.weekKey !== key) return 0;
-  return entry.sessionsCounted;
+  return entry.count;
 }
 
-function _vol1Bonus(userId) {
+function _streamRecordJoin(userId) {
   const key = _getEtWeekKey();
-  const entry = vol1WeeklyBonus.get(userId);
+  const entry = streamWeeklyJoins.get(userId);
+  if (!entry || entry.weekKey !== key) {
+    streamWeeklyJoins.set(userId, { weekKey: key, count: 1 });
+  } else {
+    entry.count += 1;
+  }
+}
+
+function _streamBonus(userId) {
+  const key = _getEtWeekKey();
+  const entry = streamBonus.get(userId);
   if (!entry || entry.weekKey !== key) return 0;
   return entry.bonus;
 }
 
-function _vol1SetBonus(userId, bonus) {
+function _streamSetBonus(userId, bonus) {
   const key = _getEtWeekKey();
-  vol1WeeklyBonus.set(userId, { weekKey: key, bonus });
+  streamBonus.set(userId, { weekKey: key, bonus });
 }
 
-// Adds elapsed connected time to the user's weekly cumulative total, then
-// recalculates how many VOL1_SESSION_MINUTES blocks that total has crossed.
-// Returns true if this call caused a NEW session to be counted (i.e. they
-// just crossed another 15-minute threshold) — used to decide whether to
-// disconnect them right at the moment they hit the limit.
-function _vol1AddMinutes(userId, minutesElapsed) {
-  const key = _getEtWeekKey();
-  let entry = vol1WeeklyMinutes.get(userId);
-  if (!entry || entry.weekKey !== key) {
-    entry = { weekKey: key, minutes: 0, sessionsCounted: 0 };
-    vol1WeeklyMinutes.set(userId, entry);
-  }
-  const before = entry.sessionsCounted;
-  entry.minutes += minutesElapsed;
-  entry.sessionsCounted = Math.floor(entry.minutes / VOL1_SESSION_MINUTES);
-  return entry.sessionsCounted > before;
+function _streamIsUnlimited(member) {
+  const hasHigherVol = ['Vol II', 'Vol III', 'Vol IV'].some(k => member.roles.cache.has(VOLUME_ROLES[k].id));
+  const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
+  const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
+  return hasHigherVol || isStaff || isOneOnOne;
 }
 
 // active countdown: { messageId, vcChannelName, sessionNote, host, startEpoch, intervalId, warned15 }
@@ -3441,13 +3434,49 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const targetUser = interaction.options.getUser('member');
         const extra = interaction.options.getInteger('extra_sessions');
-        _vol1SetBonus(targetUser.id, extra);
+        _streamSetBonus(targetUser.id, extra);
 
-        const newLimit = VOL1_WEEKLY_LIMIT + extra;
+        const newLimit = STREAM_WEEKLY_LIMIT + extra;
         return interaction.reply({
-          content: `✅ <@${targetUser.id}> can now attend ${newLimit}/5 sessions this week (base ${VOL1_WEEKLY_LIMIT} + ${extra} bonus). Resets Sunday 00:00 ET.`,
+          content: `✅ <@${targetUser.id}> can now attend ${newLimit}/5 streams this week (base ${STREAM_WEEKLY_LIMIT} + ${extra} bonus). Resets Sunday 00:00 ET.`,
           ephemeral: true,
         });
+      }
+
+      // ── /host-stream ──
+      if (commandName === 'host-stream') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        if (activeStream) {
+          return interaction.reply({ content: `A stream is already active in <#${activeStream.vcId}>. It'll auto-end when that VC empties out.`, ephemeral: true });
+        }
+
+        const vc = interaction.options.getChannel('channel');
+        await interaction.deferReply({ ephemeral: true });
+
+        const ch = interaction.guild.channels.cache.get(GENERAL_CH_ID);
+        if (!ch) return interaction.editReply({ content: 'General channel not found.' });
+
+        const embed = new EmbedBuilder()
+          .setColor(0x38bdf8)
+          .setTitle('🔴 Live Stream Starting')
+          .setDescription(
+            `<@${interaction.user.id}> is about to go live in **${vc.name}**.\n\n` +
+            `**Click Join VC before entering** — that's what locks in your weekly stream count, and you can't switch or undo it once clicked. ` +
+            `Anyone who joins the voice channel without clicking first gets kicked and asked to come back here.`
+          )
+          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited.' });
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success)
+        );
+
+        const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
+        if (!msg) return interaction.editReply({ content: 'Could not post the stream announcement.' });
+
+        activeStream = { vcId: vc.id, messageId: msg.id, hostId: interaction.user.id, clickedUserIds: new Set() };
+        return interaction.editReply({ content: `✅ Stream announcement posted in <#${GENERAL_CH_ID}>, tracking joins for <#${vc.id}>.` });
       }
 
       // ── /setup-modlog ──
@@ -4476,6 +4505,46 @@ client.on(Events.InteractionCreate, async interaction => {
         );
         await interaction.update({ embeds: [_orPollEmbed(orPollState.votes, false)], components: [row] });
       }
+
+      // ── Live-stream Join VC button ──
+      if (customId === 'stream_join_click') {
+        if (!activeStream || interaction.message.id !== activeStream.messageId) {
+          return interaction.reply({ content: 'This stream has ended.', ephemeral: true });
+        }
+
+        const member = interaction.member;
+
+        // Already clicked — no switching, no double-counting, just let them
+        // know they're already in.
+        if (activeStream.clickedUserIds.has(member.id)) {
+          return interaction.reply({ content: `You're already locked in for this stream — head to <#${activeStream.vcId}>.`, ephemeral: true });
+        }
+
+        const unlimited = _streamIsUnlimited(member);
+        if (!unlimited) {
+          const limit = STREAM_WEEKLY_LIMIT + _streamBonus(member.id);
+          const used = _streamJoinCount(member.id);
+          if (used >= limit) {
+            return interaction.reply({
+              content: `You've used your ${limit}/5 streams this week. Quota resets Sunday 00:00 ET. ` +
+                `If it's an emergency, contact the owner — or ask about Vol II/III/IV for 5/5.`,
+              ephemeral: true,
+            });
+          }
+        }
+
+        activeStream.clickedUserIds.add(member.id);
+        if (!unlimited) _streamRecordJoin(member.id);
+
+        const usedNow = unlimited ? null : _streamJoinCount(member.id);
+        const limitNow = unlimited ? null : STREAM_WEEKLY_LIMIT + _streamBonus(member.id);
+        return interaction.reply({
+          content: unlimited
+            ? `✅ You're in — head to <#${activeStream.vcId}>.`
+            : `✅ You're in — head to <#${activeStream.vcId}>. This is stream ${usedNow}/${limitNow} for you this week.`,
+          ephemeral: true,
+        });
+      }
     }
 
     // ── Modal submit — access intake ──
@@ -5189,86 +5258,46 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   }
 });
 
-// Vol I weekly live-session quota (3 of 5 Live Trading / Market Review per week)
+// Live-stream Join gate: while a stream is active, anyone joining the tracked
+// VC who hasn't clicked "Join VC" first gets kicked immediately, live, on
+// every join attempt — not a one-time sweep.
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  if (!activeStream) return;
   if (oldState.channelId === newState.channelId) return;
+  if (newState.channelId !== activeStream.vcId) return; // only police the tracked VC
 
-  const member = (newState.member || oldState.member);
+  const member = newState.member;
   if (!member || member.user.bot) return;
+  if (activeStream.clickedUserIds.has(member.id)) return; // already clicked, let them in
 
-  const hasVol1 = member.roles.cache.has(VOLUME_ROLES['Vol I'].id);
-  const hasHigherVol = ['Vol II', 'Vol III', 'Vol IV'].some(k => member.roles.cache.has(VOLUME_ROLES[k].id));
-  const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
-  const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
-  if (!hasVol1 || hasHigherVol || isStaff || isOneOnOne) return; // only strictly Vol I (no 1-on-1) gets limited
-
-  const leftTracked = oldState.channelId && VOL1_QUOTA_VC_IDS.includes(oldState.channelId);
-  const joinedTracked = newState.channelId && VOL1_QUOTA_VC_IDS.includes(newState.channelId);
-
-  // Left a tracked VC (or moved to a non-tracked one) — bank the elapsed time
-  // from their active join into the weekly cumulative total.
-  if (leftTracked) {
-    const joinedAt = vol1ActiveJoin.get(member.id);
-    vol1ActiveJoin.delete(member.id);
-    if (joinedAt) {
-      const minutesElapsed = (Date.now() - joinedAt) / 60000;
-      _vol1AddMinutes(member.id, minutesElapsed);
-    }
-  }
-
-  if (!joinedTracked) return;
-
-  // Enforce the limit up front — if their banked cumulative time already
-  // covers the full limit, they don't get back in at all.
-  const limit = VOL1_WEEKLY_LIMIT + _vol1Bonus(member.id);
-  const attended = _vol1SessionsAttended(member.id);
-  if (attended >= limit) {
-    await newState.disconnect('Vol I weekly live-session limit reached').catch(() => {});
-    try {
-      await member.send(
-        `You've used your ${limit} live session${limit === 1 ? '' : 's'} for this week (${VOL1_SESSION_MINUTES} min each, Live Trading + Market Review combined). ` +
-        `Your quota resets Sunday at midnight ET. See you at the next one!`
-      );
-    } catch {}
-    return;
-  }
-
-  // Start the clock on this stretch of connected time.
-  vol1ActiveJoin.set(member.id, Date.now());
+  await newState.disconnect('Must click Join VC on the stream announcement first').catch(() => {});
+  try {
+    await member.send(
+      `You need to click **Join VC** on the stream announcement in <#${GENERAL_CH_ID}> before joining — that's what locks in your weekly stream count. Head there and click it, then rejoin.`
+    );
+  } catch {}
 });
 
-// Vol I quota: catch someone crossing their limit WHILE still connected
-// (rather than only when they leave), so they get disconnected the moment
-// their cumulative time hits the cap instead of being able to keep sitting
-// in the VC indefinitely once they've technically used up their sessions.
-setInterval(async () => {
-  for (const [userId, joinedAt] of vol1ActiveJoin.entries()) {
-    const minutesElapsed = (Date.now() - joinedAt) / 60000;
-    if (minutesElapsed < VOL1_SESSION_MINUTES) continue; // hasn't crossed a new threshold yet, cheap early-out
+// Stream auto-ends when the tracked VC empties out.
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  if (!activeStream) return;
+  if (oldState.channelId !== activeStream.vcId) return;
+  if (newState.channelId === activeStream.vcId) return; // moved within, not a real leave
 
-    for (const guild of client.guilds.cache.values()) {
-      const member = await guild.members.fetch(userId).catch(() => null);
-      if (!member?.voice?.channelId || !VOL1_QUOTA_VC_IDS.includes(member.voice.channelId)) continue;
-
-      const limit = VOL1_WEEKLY_LIMIT + _vol1Bonus(userId);
-      const projectedAttended = _vol1SessionsAttended(userId) + Math.floor(minutesElapsed / VOL1_SESSION_MINUTES);
-      if (projectedAttended < limit) continue;
-
-      // Bank the time up to now, then disconnect — same accounting the leave
-      // handler would have done, just triggered proactively instead of
-      // waiting for them to leave on their own.
-      _vol1AddMinutes(userId, minutesElapsed);
-      vol1ActiveJoin.delete(userId);
-      await member.voice.disconnect('Vol I weekly live-session limit reached').catch(() => {});
-      try {
-        await member.send(
-          `You've used your ${limit} live session${limit === 1 ? '' : 's'} for this week (${VOL1_SESSION_MINUTES} min each, Live Trading + Market Review combined). ` +
-          `Your quota resets Sunday at midnight ET. See you at the next one!`
-        );
-      } catch {}
+  const vc = oldState.guild.channels.cache.get(activeStream.vcId);
+  if (vc && vc.members.size === 0) {
+    const ended = activeStream;
+    activeStream = null;
+    const ch = oldState.guild.channels.cache.get(GENERAL_CH_ID);
+    const msg = ch ? await ch.messages.fetch(ended.messageId).catch(() => null) : null;
+    if (msg) {
+      const endedRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Ended').setStyle(ButtonStyle.Secondary).setDisabled(true)
+      );
+      await msg.edit({ components: [endedRow] }).catch(() => {});
     }
   }
-}, 60 * 1000);
+});
 
 // ── Daily opening-range poll scheduler ──
 // Checks the current ET minute every tick; fires post/reveal once per

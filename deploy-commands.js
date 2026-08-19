@@ -189,18 +189,28 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('vol1-override')
-    .setDescription('Grant a Vol I member extra live sessions this week (staff only)')
+    .setDescription('Grant a Vol I member extra streams this week (staff only)')
     .addUserOption(opt =>
       opt.setName('member')
-        .setDescription('The Vol I member to grant extra sessions to')
+        .setDescription('The Vol I member to grant extra streams to')
         .setRequired(true)
     )
     .addIntegerOption(opt =>
       opt.setName('extra_sessions')
-        .setDescription('How many extra sessions to add on top of the base 3 (e.g. 1 = 4/5, 2 = 5/5)')
+        .setDescription('How many extra streams to add on top of the base 3 (e.g. 1 = 4/5, 2 = 5/5)')
         .setRequired(true)
         .setMinValue(0)
         .setMaxValue(2)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('host-stream')
+    .setDescription('Announce a live stream and post the Join VC gate (staff only)')
+    .addChannelOption(opt =>
+      opt.setName('channel')
+        .setDescription('The voice channel the stream will be in')
+        .addChannelTypes(2) // GuildVoice
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
