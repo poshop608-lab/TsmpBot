@@ -3493,6 +3493,11 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: 'No stream is currently active.', ephemeral: true });
         }
 
+        // Defer before any awaited work — the message fetch/edit below can
+        // take longer than Discord's 3s ACK window, which was silently
+        // expiring the interaction token and causing "didn't respond".
+        await interaction.deferReply({ ephemeral: true });
+
         const ended = activeStream;
         activeStream = null;
 
@@ -3510,7 +3515,7 @@ client.on(Events.InteractionCreate, async interaction => {
           await msg.edit({ embeds: [cancelledEmbed], components: [disabledRow] }).catch(() => {});
         }
 
-        return interaction.reply({ content: `✅ Stream cancelled — <#${ended.vcId}> is no longer gated.`, ephemeral: true });
+        return interaction.editReply({ content: `✅ Stream cancelled — <#${ended.vcId}> is no longer gated.` });
       }
 
       // ── /setup-modlog ──
