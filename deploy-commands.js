@@ -204,6 +204,15 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('reset-stream-quota')
+    .setDescription('Reset weekly stream quota — for one member or everyone (staff only)')
+    .addUserOption(opt =>
+      opt.setName('member')
+        .setDescription('Member to reset (omit to reset everyone)')
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
     .setName('host-stream')
     .setDescription('Announce a live stream and post the Join VC gate (staff only)')
     .addChannelOption(opt =>

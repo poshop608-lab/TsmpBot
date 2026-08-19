@@ -1568,6 +1568,14 @@ function _streamSetBonus(userId, bonus) {
   streamBonus.set(userId, { weekKey: key, bonus });
 }
 
+function _streamResetQuota(userId) {
+  streamWeeklyJoins.delete(userId);
+}
+
+function _streamResetAllQuotas() {
+  streamWeeklyJoins.clear();
+}
+
 function _streamIsUnlimited(member) {
   const hasHigherVol = ['Vol II', 'Vol III', 'Vol IV'].some(k => member.roles.cache.has(VOLUME_ROLES[k].id));
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
@@ -3442,6 +3450,21 @@ client.on(Events.InteractionCreate, async interaction => {
           content: `✅ <@${targetUser.id}> can now attend ${newLimit}/5 streams this week (base ${STREAM_WEEKLY_LIMIT} + ${extra} bonus). Resets Sunday 00:00 ET.`,
           ephemeral: true,
         });
+      }
+
+      // ── /reset-stream-quota ──
+      if (commandName === 'reset-stream-quota') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        const targetUser = interaction.options.getUser('member');
+        if (targetUser) {
+          _streamResetQuota(targetUser.id);
+          return interaction.reply({ content: `✅ Reset <@${targetUser.id}>'s stream quota to 0/${STREAM_WEEKLY_LIMIT} for this week.`, ephemeral: true });
+        }
+
+        _streamResetAllQuotas();
+        return interaction.reply({ content: `✅ Reset stream quota to 0/${STREAM_WEEKLY_LIMIT} for everyone this week.`, ephemeral: true });
       }
 
       // ── /host-stream ──
