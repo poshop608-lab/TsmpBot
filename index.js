@@ -3476,14 +3476,18 @@ client.on(Events.InteractionCreate, async interaction => {
           .setTitle('🔴 Live Stream Starting')
           .setDescription(
             `<@${interaction.user.id}> is about to go live in **${vc.name}**.\n\n` +
-            `**Click Join VC before entering** — that's what locks in your weekly stream count, and you can't switch or undo it once clicked. ` +
-            `Anyone who joins the voice channel without clicking first gets kicked and asked to come back here.`
+            `Click **Join VC** to lock in this stream toward your weekly count — no undo, no switching once clicked. ` +
+            `The VC itself is open to anyone, clicking is just how your attendance gets counted.`
           )
-          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited.' });
+          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited. Host never needs to click.' });
 
+        // Everyone sees Join VC. Only the button ROW differs for staff, who
+        // also get Cancel Stream and End Stream — regular members never see
+        // those two.
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger)
+          new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId(`stream_end_${interaction.user.id}`).setLabel('End Stream').setEmoji('⏹️').setStyle(ButtonStyle.Secondary)
         );
 
         const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
@@ -4566,6 +4570,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const member = interaction.member;
 
+        // The host never needs to click — they can join/leave the VC freely
+        // at any time, no quota use, no lock-in.
+        if (member.id === activeStream.hostId) {
+          return interaction.reply({ content: `You're hosting this stream — no need to click, join <#${activeStream.vcId}> whenever you're ready.`, ephemeral: true });
+        }
+
         // Already clicked — no switching, no double-counting, just let them
         // know they're already in.
         if (activeStream.clickedUserIds.has(member.id)) {
@@ -4598,25 +4608,57 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // ── Cancel Stream button — host only ──
+      // ── Cancel Stream button — staff only ──
       if (customId.startsWith('stream_cancel_')) {
-        const hostId = customId.replace('stream_cancel_', '');
-        if (interaction.user.id !== hostId) {
-          return interaction.reply({ content: 'Only the host who started this stream can cancel it.', ephemeral: true });
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) {
+          return interaction.reply({ content: 'Only staff can cancel a stream.', ephemeral: true });
         }
         if (!activeStream || interaction.message.id !== activeStream.messageId) {
           return interaction.reply({ content: 'This stream has already ended.', ephemeral: true });
         }
 
+        const hostId = activeStream.hostId;
         activeStream = null;
         const cancelledEmbed = EmbedBuilder.from(interaction.message.embeds[0])
           .setColor(0x6b7280)
           .setTitle('🛑 Stream Cancelled')
-          .setDescription(`<@${hostId}> cancelled this stream. No sessions were counted.`);
+          .setDescription(`Cancelled by <@${interaction.user.id}>. No sessions were counted.`);
         const disabledRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Cancelled').setStyle(ButtonStyle.Secondary).setDisabled(true)
         );
         return interaction.update({ embeds: [cancelledEmbed], components: [disabledRow] });
+      }
+
+      // ── End Stream button — staff only. Locks in a session for whoever
+      // clicks it (unless it's the host, who's exempt from the quota) and
+      // marks the stream officially over. ──
+      if (customId.startsWith('stream_end_')) {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) {
+          return interaction.reply({ content: 'Only staff can end a stream.', ephemeral: true });
+        }
+        if (!activeStream || interaction.message.id !== activeStream.messageId) {
+          return interaction.reply({ content: 'This stream has already ended.', ephemeral: true });
+        }
+
+        const member = interaction.member;
+        const isHost = member.id === activeStream.hostId;
+        if (!isHost && !activeStream.clickedUserIds.has(member.id)) {
+          const unlimited = _streamIsUnlimited(member);
+          activeStream.clickedUserIds.add(member.id);
+          if (!unlimited) _streamRecordJoin(member.id);
+        }
+
+        const endedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+          .setColor(0x4ade80)
+          .setTitle('✅ Stream Ended')
+          .setDescription(`Ended by <@${interaction.user.id}>. ${activeStream.clickedUserIds.size} member(s) locked in this stream.`);
+        const disabledRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Ended').setStyle(ButtonStyle.Secondary).setDisabled(true)
+        );
+        activeStream = null;
+        return interaction.update({ embeds: [endedEmbed], components: [disabledRow] });
       }
 
       // ── Force-cancel a stuck stream from /host-stream's conflict prompt,
@@ -5398,46 +5440,12 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   }
 });
 
-// Live-stream Join gate: while a stream is active, anyone joining the tracked
-// VC who hasn't clicked "Join VC" first gets kicked immediately, live, on
-// every join attempt — not a one-time sweep.
-client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-  if (!activeStream) return;
-  if (oldState.channelId === newState.channelId) return;
-  if (newState.channelId !== activeStream.vcId) return; // only police the tracked VC
-
-  const member = newState.member;
-  if (!member || member.user.bot) return;
-  if (activeStream.clickedUserIds.has(member.id)) return; // already clicked, let them in
-
-  await newState.disconnect('Must click Join VC on the stream announcement first').catch(() => {});
-  try {
-    await member.send(
-      `You need to click **Join VC** on the stream announcement in <#${GENERAL_CH_ID}> before joining — that's what locks in your weekly stream count. Head there and click it, then rejoin.`
-    );
-  } catch {}
-});
-
-// Stream auto-ends when the tracked VC empties out.
-client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-  if (!activeStream) return;
-  if (oldState.channelId !== activeStream.vcId) return;
-  if (newState.channelId === activeStream.vcId) return; // moved within, not a real leave
-
-  const vc = oldState.guild.channels.cache.get(activeStream.vcId);
-  if (vc && vc.members.size === 0) {
-    const ended = activeStream;
-    activeStream = null;
-    const ch = oldState.guild.channels.cache.get(GENERAL_CH_ID);
-    const msg = ch ? await ch.messages.fetch(ended.messageId).catch(() => null) : null;
-    if (msg) {
-      const endedRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Ended').setStyle(ButtonStyle.Secondary).setDisabled(true)
-      );
-      await msg.edit({ components: [endedRow] }).catch(() => {});
-    }
-  }
-});
+// No VC-entry enforcement anymore — /host-stream only tracks quota, it never
+// gates who can join the voice channel. Anyone can join/leave freely at any
+// time, with or without a stream running. Join VC / End Stream buttons exist
+// purely to let members opt in to having a session counted against their
+// weekly limit; the stream itself now only ends via the End Stream button
+// (or /cancel-stream), not by the VC emptying out.
 
 // ── Daily opening-range poll scheduler ──
 // Checks the current ET minute every tick; fires post/reveal once per
