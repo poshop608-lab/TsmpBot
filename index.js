@@ -1543,6 +1543,21 @@ function _fmtMins(ms) {
   return `${Math.round(ms / 60000)}m`;
 }
 
+function _streamEmbed({ hostId, vcName, startedAt, joined }) {
+  return new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle('🔴 Live Stream Starting')
+    .setDescription(
+      `<@${hostId}> is live in **${vcName}**.\n\n` +
+      `Click **Join VC** to lock in this stream — no undo once clicked.`
+    )
+    .addFields(
+      { name: 'Weekly limit', value: 'Vol I: 2 · Vol II: 3 · Vol III/IV: 5', inline: false },
+      { name: 'Joined', value: `${joined}`, inline: true },
+      { name: 'Started', value: _fmtEt(startedAt), inline: true },
+    );
+}
+
 function _getEtWeekKey(date = new Date()) {
   // Week "key" = the most recent Sunday 00:00 ET, as an ISO date string.
   const et = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -3581,15 +3596,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         if (!ch) return interaction.editReply({ content: 'Stream announcement channel not found.' });
 
-        const embed = new EmbedBuilder()
-          .setColor(0x38bdf8)
-          .setTitle('🔴 Live Stream Starting')
-          .setDescription(
-            `<@${interaction.user.id}> is about to go live in **${vc.name}**.\n\n` +
-            `Click **Join VC** to lock in this stream toward your weekly count — no undo, no switching once clicked. ` +
-            `The VC itself is open to anyone, clicking is just how your attendance gets counted.`
-          )
-          .setFooter({ text: 'Weekly streams — Vol I: 2, Vol II: 3, Vol III/IV: 5. 1-on-1 and staff: unlimited. Host never needs to click.' });
+        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0 });
 
         // Everyone sees Join VC. Only the button ROW differs for staff, who
         // also get Cancel Stream and End Stream — regular members never see
@@ -4709,12 +4716,20 @@ client.on(Events.InteractionCreate, async interaction => {
         activeStream.clickedUserIds.add(member.id);
         if (!unlimited) _streamRecordJoin(member.id);
 
+        const updatedEmbed = _streamEmbed({
+          hostId: activeStream.hostId,
+          vcName: activeStream.vcName,
+          startedAt: activeStream.startedAt,
+          joined: activeStream.clickedUserIds.size,
+        });
+        interaction.message.edit({ embeds: [updatedEmbed] }).catch(() => {});
+
         const usedNow = unlimited ? null : _streamJoinCount(member.id);
         const limitNow = unlimited ? null : _streamBaseLimit(member) + _streamBonus(member.id);
         return interaction.reply({
           content: unlimited
             ? `✅ You're in — head to <#${activeStream.vcId}>.`
-            : `✅ You're in — head to <#${activeStream.vcId}>. This is stream ${usedNow}/${limitNow} for you this week.`,
+            : `✅ You're in — head to <#${activeStream.vcId}>. (${usedNow}/${limitNow} this week)`,
           ephemeral: true,
         });
       }
@@ -4808,15 +4823,7 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.editReply({ content: 'Old stream cancelled, but could not start the new one — channel not found. Run /host-stream again.', components: [] });
         }
 
-        const newEmbed = new EmbedBuilder()
-          .setColor(0x38bdf8)
-          .setTitle('🔴 Live Stream Starting')
-          .setDescription(
-            `<@${interaction.user.id}> is about to go live in **${newVc.name}**.\n\n` +
-            `Click **Join VC** to lock in this stream toward your weekly count — no undo, no switching once clicked. ` +
-            `Anyone who joins that voice channel without clicking first gets kicked and asked to come back here.`
-          )
-          .setFooter({ text: 'Weekly streams — Vol I: 2, Vol II: 3, Vol III/IV: 5. 1-on-1 and staff: unlimited. Host never needs to click.' });
+        const newEmbed = _streamEmbed({ hostId: interaction.user.id, vcName: newVc.name, startedAt: new Date(), joined: 0 });
 
         const newRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
@@ -5592,7 +5599,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     await newState.disconnect('Must click Join VC on the stream announcement first').catch(() => {});
     try {
       await member.send(
-        `You need to click **Join VC** on the stream announcement in <#${STREAM_ANNOUNCE_CH_ID}> before joining — that's what locks in your weekly stream count. Head there and click it, then rejoin.`
+        `Click **Join VC** in <#${STREAM_ANNOUNCE_CH_ID}> first, then rejoin.`
       );
     } catch {}
     return;
@@ -5605,7 +5612,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
       await newState.disconnect('Weekly live-stream limit reached').catch(() => {});
       try {
         await member.send(
-          `You've used your ${limit}/${limit} streams for this week — quota resets Sunday 00:00 ET. If it's an emergency, contact the owner, or ask about a higher volume tier for more streams.`
+          `You've hit your weekly limit (${limit}/${limit}). Resets Sunday 00:00 ET.`
         );
       } catch {}
       return;
