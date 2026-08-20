@@ -189,18 +189,18 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('vol1-override')
-    .setDescription('Grant a Vol I member extra streams this week (staff only)')
+    .setDescription('Grant a member extra streams this week on top of their volume tier base (staff only)')
     .addUserOption(opt =>
       opt.setName('member')
-        .setDescription('The Vol I member to grant extra streams to')
+        .setDescription('The member to grant extra streams to')
         .setRequired(true)
     )
     .addIntegerOption(opt =>
       opt.setName('extra_sessions')
-        .setDescription('How many extra streams to add on top of the base 3 (e.g. 1 = 4/5, 2 = 5/5)')
+        .setDescription('How many extra streams to add on top of their tier base (Vol I: 2, Vol II: 3, Vol III/IV: 5)')
         .setRequired(true)
         .setMinValue(0)
-        .setMaxValue(2)
+        .setMaxValue(3)
     ),
 
   new SlashCommandBuilder()

@@ -1524,7 +1524,9 @@ let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 // Vol II/III/IV, 1-on-1, and staff are unlimited but still must click to
 // enter (the click is the single gate for everyone, only the quota differs).
 const ONE_ON_ONE_ROLE_ID = '1539004461299539978';
-const STREAM_WEEKLY_LIMIT = 3; // Vol I only; higher tiers unlimited
+// Base weekly stream limit by volume tier. Staff and 1-on-1 role holders are
+// fully unlimited (no cap at all) — everyone else gets their tier's number.
+const STREAM_TIER_LIMITS = { 'Vol I': 2, 'Vol II': 3, 'Vol III': 5, 'Vol IV': 5 };
 const streamWeeklyJoins = new Map(); // userId -> { weekKey: string, count: number }
 const streamBonus = new Map();       // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
 let activeStream = null; // { vcId, vcName, messageId, hostId, startedAt, clickedUserIds: Set<string>, vcTimes: Map<userId, { joinedAt, totalMs }> } — null when no stream is live
@@ -1608,10 +1610,19 @@ function _streamFinalizeAndLog(stream) {
 }
 
 function _streamIsUnlimited(member) {
-  const hasHigherVol = ['Vol II', 'Vol III', 'Vol IV'].some(k => member.roles.cache.has(VOLUME_ROLES[k].id));
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
   const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
-  return hasHigherVol || isStaff || isOneOnOne;
+  return isStaff || isOneOnOne;
+}
+
+// Highest volume tier the member holds wins (Vol I < II < III < IV), so
+// someone with both Vol I and Vol III gets Vol III's limit, not Vol I's.
+function _streamBaseLimit(member) {
+  const order = ['Vol IV', 'Vol III', 'Vol II', 'Vol I'];
+  for (const tier of order) {
+    if (member.roles.cache.has(VOLUME_ROLES[tier].id)) return STREAM_TIER_LIMITS[tier];
+  }
+  return STREAM_TIER_LIMITS['Vol I']; // no volume role at all — fall back to the lowest tier's cap
 }
 
 // active countdown: { messageId, vcChannelName, sessionNote, host, startEpoch, intervalId, warned15 }
@@ -3465,20 +3476,22 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       // ── /vol1-override ──
-      // Grants a specific Vol I member extra live sessions for the current
-      // week only (e.g. bump them to 4/5 or 5/5). Resets along with everyone
-      // else's count at the next Sunday 00:00 ET rollover.
+      // Grants a specific member extra live sessions for the current week
+      // only, on top of whatever their volume tier's base limit is. Resets
+      // along with everyone else's count at the next Sunday 00:00 ET rollover.
       if (commandName === 'vol1-override') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
         const targetUser = interaction.options.getUser('member');
+        const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
         const extra = interaction.options.getInteger('extra_sessions');
         _streamSetBonus(targetUser.id, extra);
 
-        const newLimit = STREAM_WEEKLY_LIMIT + extra;
+        const baseLimit = targetMember ? _streamBaseLimit(targetMember) : STREAM_TIER_LIMITS['Vol I'];
+        const newLimit = baseLimit + extra;
         return interaction.reply({
-          content: `✅ <@${targetUser.id}> can now attend ${newLimit}/5 streams this week (base ${STREAM_WEEKLY_LIMIT} + ${extra} bonus). Resets Sunday 00:00 ET.`,
+          content: `✅ <@${targetUser.id}> can now attend ${newLimit}/5 streams this week (base ${baseLimit} + ${extra} bonus). Resets Sunday 00:00 ET.`,
           ephemeral: true,
         });
       }
@@ -3491,11 +3504,11 @@ client.on(Events.InteractionCreate, async interaction => {
         const targetUser = interaction.options.getUser('member');
         if (targetUser) {
           _streamResetQuota(targetUser.id);
-          return interaction.reply({ content: `✅ Reset <@${targetUser.id}>'s stream quota to 0/${STREAM_WEEKLY_LIMIT} for this week.`, ephemeral: true });
+          return interaction.reply({ content: `✅ Reset <@${targetUser.id}>'s stream quota to 0 for this week.`, ephemeral: true });
         }
 
         _streamResetAllQuotas();
-        return interaction.reply({ content: `✅ Reset stream quota to 0/${STREAM_WEEKLY_LIMIT} for everyone this week.`, ephemeral: true });
+        return interaction.reply({ content: `✅ Reset stream quota to 0 for everyone this week.`, ephemeral: true });
       }
 
       // ── /stream-history ──
@@ -3576,7 +3589,7 @@ client.on(Events.InteractionCreate, async interaction => {
             `Click **Join VC** to lock in this stream toward your weekly count — no undo, no switching once clicked. ` +
             `The VC itself is open to anyone, clicking is just how your attendance gets counted.`
           )
-          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited. Host never needs to click.' });
+          .setFooter({ text: 'Weekly streams — Vol I: 2, Vol II: 3, Vol III/IV: 5. 1-on-1 and staff: unlimited. Host never needs to click.' });
 
         // Everyone sees Join VC. Only the button ROW differs for staff, who
         // also get Cancel Stream and End Stream — regular members never see
@@ -4682,12 +4695,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const unlimited = _streamIsUnlimited(member);
         if (!unlimited) {
-          const limit = STREAM_WEEKLY_LIMIT + _streamBonus(member.id);
+          const limit = _streamBaseLimit(member) + _streamBonus(member.id);
           const used = _streamJoinCount(member.id);
           if (used >= limit) {
             return interaction.reply({
-              content: `You've used your ${limit}/5 streams this week. Quota resets Sunday 00:00 ET. ` +
-                `If it's an emergency, contact the owner — or ask about Vol II/III/IV for 5/5.`,
+              content: `You've used your ${limit}/${limit} streams this week. Quota resets Sunday 00:00 ET. ` +
+                `If it's an emergency, contact the owner — or ask about a higher volume tier for more streams.`,
               ephemeral: true,
             });
           }
@@ -4697,7 +4710,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!unlimited) _streamRecordJoin(member.id);
 
         const usedNow = unlimited ? null : _streamJoinCount(member.id);
-        const limitNow = unlimited ? null : STREAM_WEEKLY_LIMIT + _streamBonus(member.id);
+        const limitNow = unlimited ? null : _streamBaseLimit(member) + _streamBonus(member.id);
         return interaction.reply({
           content: unlimited
             ? `✅ You're in — head to <#${activeStream.vcId}>.`
@@ -4803,7 +4816,7 @@ client.on(Events.InteractionCreate, async interaction => {
             `Click **Join VC** to lock in this stream toward your weekly count — no undo, no switching once clicked. ` +
             `Anyone who joins that voice channel without clicking first gets kicked and asked to come back here.`
           )
-          .setFooter({ text: 'Vol I: 3 of 5 streams per week. Vol II/III/IV, 1-on-1, and staff: unlimited. Host never needs to click.' });
+          .setFooter({ text: 'Weekly streams — Vol I: 2, Vol II: 3, Vol III/IV: 5. 1-on-1 and staff: unlimited. Host never needs to click.' });
 
         const newRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
@@ -5586,13 +5599,13 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   }
 
   if (!_streamIsUnlimited(member)) {
-    const limit = STREAM_WEEKLY_LIMIT + _streamBonus(member.id);
+    const limit = _streamBaseLimit(member) + _streamBonus(member.id);
     const used = _streamJoinCount(member.id);
     if (used > limit) {
       await newState.disconnect('Weekly live-stream limit reached').catch(() => {});
       try {
         await member.send(
-          `You've used your ${limit}/5 streams for this week — quota resets Sunday 00:00 ET. If it's an emergency, contact the owner, or ask about Vol II/III/IV for 5/5.`
+          `You've used your ${limit}/${limit} streams for this week — quota resets Sunday 00:00 ET. If it's an emergency, contact the owner, or ask about a higher volume tier for more streams.`
         );
       } catch {}
       return;
