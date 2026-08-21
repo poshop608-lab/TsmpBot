@@ -1,5 +1,6 @@
 [phases.setup]
 nixPkgs = [
+  "nodejs_20",
   "ffmpeg", "xorg.xvfb", "pulseaudio", "xorg.xrandr",
   "glib", "nss", "nspr", "at-spi2-atk", "cups", "dbus", "libdrm",
   "mesa", "expat", "libxkbcommon", "alsa-lib",
