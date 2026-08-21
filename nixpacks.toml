@@ -1,11 +1,18 @@
 [phases.setup]
-nixPkgs = ["ffmpeg", "xvfb-run", "pulseaudio", "xorg.xrandr"]
+nixPkgs = [
+  "ffmpeg", "xvfb-run", "pulseaudio", "xorg.xrandr",
+  "glib", "nss", "nspr", "at-spi2-atk", "cups", "dbus", "libdrm",
+  "mesa", "expat", "libxkbcommon", "alsa-lib",
+  "xorg.libX11", "xorg.libXcomposite", "xorg.libXdamage", "xorg.libXext",
+  "xorg.libXfixes", "xorg.libXrandr", "xorg.libxcb", "xorg.libXcursor",
+  "xorg.libXi", "xorg.libXtst", "xorg.libXScrnSaver",
+]
 
 [variables]
 PLAYWRIGHT_BROWSERS_PATH = "0"
 
 [phases.install]
-cmds = ["npm install", "npx playwright install --with-deps chromium"]
+cmds = ["npm install", "npx playwright install chromium"]
 
 [start]
 # start Xvfb + PulseAudio, then the bot — recorder.js expects DISPLAY=:99
