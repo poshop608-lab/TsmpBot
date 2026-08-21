@@ -11,6 +11,10 @@ nixPkgs = [
 
 [variables]
 PLAYWRIGHT_BROWSERS_PATH = "0"
+# Chromium needs these Nix-provided shared libs (glib, nss, mesa, xorg libs,
+# etc.) on the linker path — Nix profiles them into a stable symlink farm at
+# /root/.nix-profile rather than putting them on the system's default path.
+LD_LIBRARY_PATH = "/root/.nix-profile/lib:/root/.nix-profile/lib64"
 
 [phases.install]
 cmds = ["npm install"]

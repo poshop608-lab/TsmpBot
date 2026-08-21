@@ -2894,7 +2894,8 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.followUp(`Recording started in **${channel.name}**. Run \`/stop\` when done.`);
         } catch (err) {
           console.error('[record] start failed:', err);
-          await interaction.followUp(`Could not start recording: ${err.message}`);
+          const msg = `Could not start recording: ${err.message}`;
+          await interaction.followUp(msg.length > 1900 ? msg.slice(0, 1900) + '… (see Railway logs for full error)' : msg);
         }
         return;
       }
@@ -2911,7 +2912,8 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.followUp(`Recording saved (~${mins} min):\n${url}`);
         } catch (err) {
           console.error('[record] stop failed:', err);
-          await interaction.followUp(`Recording failed: ${err.message}`);
+          const msg = `Recording failed: ${err.message}`;
+          await interaction.followUp(msg.length > 1900 ? msg.slice(0, 1900) + '… (see Railway logs for full error)' : msg);
         }
         return;
       }
