@@ -1,6 +1,9 @@
 [phases.setup]
 nixPkgs = ["ffmpeg", "xvfb-run", "pulseaudio", "xorg.xrandr"]
 
+[variables]
+PLAYWRIGHT_BROWSERS_PATH = "0"
+
 [phases.install]
 cmds = ["npm install", "npx playwright install --with-deps chromium"]
 
