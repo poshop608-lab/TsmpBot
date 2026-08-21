@@ -15,10 +15,8 @@ PLAYWRIGHT_BROWSERS_PATH = "0"
 cmds = ["npm install"]
 
 [start]
-# Chromium install runs here, not in [phases.install] — Nixpacks caches the
-# install phase whenever package.json/package-lock.json are unchanged, which
-# silently skipped "npx playwright install" on every build after the first
-# one. Running it here means it executes on every boot, but the command is
-# a no-op (near-instant) once the browser is already present, so it costs
-# nothing on the common case and self-heals if it's ever missing.
-cmd = "npx playwright install chromium && (Xvfb :99 -screen 0 1920x1080x24 &) && sleep 2 && pulseaudio --start --exit-idle-time=-1 && node index.js"
+# Railway was observed running "npm start" regardless of this [start] table
+# (confirmed via deploy logs never showing this cmd's output at all), so the
+# real boot sequence lives in start.sh, referenced from package.json's start
+# script. This entry is kept as a fallback in case that behavior changes.
+cmd = "sh start.sh"
