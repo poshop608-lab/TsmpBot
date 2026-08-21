@@ -12,9 +12,13 @@ nixPkgs = [
 PLAYWRIGHT_BROWSERS_PATH = "0"
 
 [phases.install]
-cmds = ["npm install", "npx playwright install chromium"]
+cmds = ["npm install"]
 
 [start]
-# start Xvfb + PulseAudio, then the bot — recorder.js expects DISPLAY=:99
-# and a "discordcap" PulseAudio null-sink to already exist.
-cmd = "Xvfb :99 -screen 0 1920x1080x24 & sleep 2 && pulseaudio --start --exit-idle-time=-1 && node index.js"
+# Chromium install runs here, not in [phases.install] — Nixpacks caches the
+# install phase whenever package.json/package-lock.json are unchanged, which
+# silently skipped "npx playwright install" on every build after the first
+# one. Running it here means it executes on every boot, but the command is
+# a no-op (near-instant) once the browser is already present, so it costs
+# nothing on the common case and self-heals if it's ever missing.
+cmd = "npx playwright install chromium && (Xvfb :99 -screen 0 1920x1080x24 &) && sleep 2 && pulseaudio --start --exit-idle-time=-1 && node index.js"
