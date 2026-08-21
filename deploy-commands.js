@@ -322,6 +322,7 @@ const commands = [
     .addChannelOption(opt =>
       opt.setName('channel')
         .setDescription('Voice channel to join and record')
+        .addChannelTypes(2) // GuildVoice
         .setRequired(true)
     ),
 
