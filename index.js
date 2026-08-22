@@ -5157,6 +5157,54 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: 'Cancelled.', embeds: [], components: [] });
       }
 
+      // ── Custom-model access request: Approve/Decline. These buttons are
+      // posted by the Worker (into a Discord ticket channel) but Discord
+      // routes the actual click back to the bot's gateway connection, not
+      // the Worker's HTTP /interactions — so the real handler lives here,
+      // calling the Worker's bot-only model endpoints server-to-server.
+      // Creator-only (checked against the model's own creatorId, not a
+      // Discord role), matching "any student can create a model" spec. ──
+      if (customId.startsWith('model_approve|') || customId.startsWith('model_decline|')) {
+        const [action, modelId, requesterId] = customId.split('|');
+        const approve = action === 'model_approve';
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/models/get', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: modelId }),
+          });
+          const d = await r.json();
+          if (!d.ok) return interaction.editReply({ content: 'Could not find that model — it may have been deleted.' });
+
+          const model = d.model;
+          if (model.creatorId !== interaction.user.id) {
+            return interaction.editReply({ content: 'Only the model creator can resolve this.' });
+          }
+
+          if (approve) {
+            await fetch('https://smp-join.poshop608.workers.dev/bot/models/grant', {
+              method: 'POST',
+              headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: modelId, requesterId }),
+            });
+          }
+
+          await interaction.channel.send({
+            content: approve
+              ? `✅ <@${requesterId}> approved for **${model.name}**.`
+              : `❌ <@${requesterId}>'s request for **${model.name}** was declined.`,
+          }).catch(() => {});
+
+          return interaction.editReply({ content: 'Done.' });
+        } catch (e) {
+          console.error('[model approve/decline] failed:', e.message);
+          return interaction.editReply({ content: 'Something went wrong — try again.' });
+        }
+      }
+
       // ── Signal outcome buttons — only the person who dropped the signal
       // can resolve it. signalId is formatted "sig_<timestamp>_<userId>", so
       // the poster's ID is recovered directly from it rather than needing a
