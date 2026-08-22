@@ -1528,8 +1528,8 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
 
   const embed = new EmbedBuilder()
     .setColor(0x38bdf8)
-    .setTitle('🔔 Signal')
-    .setFooter({ text: `Dropped by ${user.username}` })
+    .setAuthor({ name: `${user.username} dropped a signal`, iconURL: user.displayAvatarURL() })
+    .setTitle(asset ? `🔔 ${asset}` : '🔔 Signal')
     .setTimestamp();
   if (extraFields) embed.addFields(...extraFields);
   embed.addFields(
@@ -4888,23 +4888,18 @@ client.on(Events.InteractionCreate, async interaction => {
 
       // ── /dropsignal: "Level" path — jumps straight to the quick modal. ──
       if (customId === 'dropsignal_pick_level') {
-        const modal = new ModalBuilder()
-          .setCustomId('dropsignal_modal')
-          .setTitle('Drop a Signal — Level');
-        modal.addComponents(
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('sig_level').setLabel('Level').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 21500')
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('sig_note').setLabel('Note (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('e.g. strong displacement / algo signature')
-          ),
+        signalDrafts.set(interaction.user.id, { kind: 'level' });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('dropsignal_asset_NQ').setLabel('NQ').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_ES').setLabel('ES').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_GOLD').setLabel('GOLD').setStyle(ButtonStyle.Primary),
         );
-        return interaction.showModal(modal);
+        return interaction.update({ content: 'Which asset?', components: [row] });
       }
 
       // ── /dropsignal: "Signal" path — step 1, pick the asset. ──
       if (customId === 'dropsignal_pick_signal') {
-        signalDrafts.set(interaction.user.id, {});
+        signalDrafts.set(interaction.user.id, { kind: 'signal' });
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('dropsignal_asset_NQ').setLabel('NQ').setStyle(ButtonStyle.Primary),
           new ButtonBuilder().setCustomId('dropsignal_asset_ES').setLabel('ES').setStyle(ButtonStyle.Primary),
@@ -4918,6 +4913,23 @@ client.on(Events.InteractionCreate, async interaction => {
         const draft = signalDrafts.get(interaction.user.id);
         if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
         draft.asset = customId.replace('dropsignal_asset_', '');
+
+        // "Level" path: asset picked, now go straight to the level+note modal
+        // (no Buy/Sell/Stop/TP — that's the "Signal" path's structured flow).
+        if (draft.kind === 'level') {
+          const modal = new ModalBuilder()
+            .setCustomId('dropsignal_modal')
+            .setTitle(`Drop a Signal — ${draft.asset}`);
+          modal.addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId('sig_level').setLabel('Level').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 21500')
+            ),
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId('sig_note').setLabel('Note (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('e.g. strong displacement / algo signature')
+            ),
+          );
+          return interaction.showModal(modal);
+        }
 
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('dropsignal_dir_Buy').setLabel('Buy').setStyle(ButtonStyle.Success),
@@ -5134,8 +5146,11 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const level = interaction.fields.getTextInputValue('sig_level');
       const note = interaction.fields.getTextInputValue('sig_note') || null;
+      const draft = signalDrafts.get(interaction.user.id);
+      const asset = draft?.asset || null;
+      signalDrafts.delete(interaction.user.id);
 
-      const msg = await _postSignal(interaction.guild, interaction.user, { level, note });
+      const msg = await _postSignal(interaction.guild, interaction.user, { level, note, asset });
       if (!msg) return interaction.editReply({ content: 'Could not post the signal — check the signals channel exists.' });
 
       return interaction.editReply({ content: 'Signal dropped.' });
