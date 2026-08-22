@@ -1705,6 +1705,42 @@ function _streamFinalizeAndLog(stream) {
     headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(entry),
   }).catch(e => console.error('[stream history] web save failed:', e.message));
+
+  return entry;
+}
+
+// Builds the same single-stream summary embed /stream-history uses, for one
+// already-finalized entry — shared so End Stream's auto-post and the manual
+// /stream-history command render identically.
+async function _streamHistoryEmbed(guild, entry) {
+  let lines = '*No one logged VC time.*';
+  if (entry.attendance.length) {
+    const rows = [];
+    for (const a of entry.attendance.sort((x, y) => y.ms - x.ms)) {
+      const member = await guild.members.fetch(a.userId).catch(() => null);
+      let quotaTxt = '';
+      if (member) {
+        if (_streamIsUnlimited(member)) {
+          quotaTxt = ' — unlimited';
+        } else {
+          const limit = _streamBaseLimit(member) + _streamBonus(a.userId);
+          const used = _streamJoinCount(a.userId);
+          quotaTxt = ` — ${used}/${limit} this week`;
+        }
+      }
+      rows.push(`<@${a.userId}> — ${_fmtMins(a.ms)}${quotaTxt}`);
+    }
+    lines = rows.join('\n');
+  }
+
+  return new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle(`🔊 ${entry.vcName}`)
+    .setDescription(
+      `Host: <@${entry.hostId}>\n` +
+      `${_fmtEt(new Date(entry.startedAt))} → ${_fmtEt(new Date(entry.endedAt))}\n\n` +
+      `**Attendance:**\n${lines}`
+    );
 }
 
 function _streamIsUnlimited(member) {
@@ -3651,40 +3687,9 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.editReply({ content: 'Posted.' });
         }
 
-        const embeds = [];
         const chunk = [...list].reverse().slice(0, 10); // most recent first, Discord caps 10 embeds/msg
-        for (const s of chunk) {
-          let lines = '*No one logged VC time.*';
-          if (s.attendance.length) {
-            const rows = [];
-            for (const a of s.attendance.sort((x, y) => y.ms - x.ms)) {
-              const member = await interaction.guild.members.fetch(a.userId).catch(() => null);
-              let quotaTxt = '';
-              if (member) {
-                if (_streamIsUnlimited(member)) {
-                  quotaTxt = ' — unlimited';
-                } else {
-                  const limit = _streamBaseLimit(member) + _streamBonus(a.userId);
-                  const used = _streamJoinCount(a.userId);
-                  quotaTxt = ` — ${used}/${limit} this week`;
-                }
-              }
-              rows.push(`<@${a.userId}> — ${_fmtMins(a.ms)}${quotaTxt}`);
-            }
-            lines = rows.join('\n');
-          }
-
-          embeds.push(
-            new EmbedBuilder()
-              .setColor(0x38bdf8)
-              .setTitle(`🔊 ${s.vcName}`)
-              .setDescription(
-                `Host: <@${s.hostId}>\n` +
-                `${_fmtEt(new Date(s.startedAt))} → ${_fmtEt(new Date(s.endedAt))}\n\n` +
-                `**Attendance:**\n${lines}`
-              )
-          );
-        }
+        const embeds = [];
+        for (const s of chunk) embeds.push(await _streamHistoryEmbed(interaction.guild, s));
 
         await historyCh.send({
           content: dateFilter
@@ -5006,9 +5011,18 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder().setCustomId('stream_join_ended').setLabel('Stream Ended').setStyle(ButtonStyle.Secondary).setDisabled(true)
         );
 
-        _streamFinalizeAndLog(activeStream);
+        const finishedEntry = _streamFinalizeAndLog(activeStream);
         activeStream = null;
-        return interaction.update({ embeds: [endedEmbed], components: [disabledRow] });
+        await interaction.update({ embeds: [endedEmbed], components: [disabledRow] });
+
+        // Auto-post this stream's history summary — same format as
+        // /stream-history — so staff don't have to run it manually every time.
+        const historyCh = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+        if (historyCh) {
+          const summaryEmbed = await _streamHistoryEmbed(interaction.guild, finishedEntry);
+          await historyCh.send({ embeds: [summaryEmbed] }).catch(() => {});
+        }
+        return;
       }
 
       // ── /dropsignal: "Level" path — jumps straight to the quick modal. ──
