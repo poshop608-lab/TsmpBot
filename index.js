@@ -3610,19 +3610,38 @@ client.on(Events.InteractionCreate, async interaction => {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
+        const historyCh = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+        if (!historyCh) return interaction.reply({ content: 'Stream announcement channel not found.', ephemeral: true });
+
         if (!streamHistory.length) {
-          return interaction.reply({ content: 'No completed streams logged yet.', ephemeral: true });
+          await historyCh.send({ content: 'No completed streams logged yet.' });
+          return interaction.reply({ content: 'Posted.', ephemeral: true });
         }
+
+        await interaction.deferReply({ ephemeral: true });
 
         const embeds = [];
         const chunk = [...streamHistory].reverse().slice(0, 10); // most recent first, Discord caps 10 embeds/msg
         for (const s of chunk) {
-          const lines = s.attendance.length
-            ? s.attendance
-                .sort((a, b) => b.ms - a.ms)
-                .map(a => `<@${a.userId}> — ${_fmtMins(a.ms)}`)
-                .join('\n')
-            : '*No one logged VC time.*';
+          let lines = '*No one logged VC time.*';
+          if (s.attendance.length) {
+            const rows = [];
+            for (const a of s.attendance.sort((x, y) => y.ms - x.ms)) {
+              const member = await interaction.guild.members.fetch(a.userId).catch(() => null);
+              let quotaTxt = '';
+              if (member) {
+                if (_streamIsUnlimited(member)) {
+                  quotaTxt = ' — unlimited';
+                } else {
+                  const limit = _streamBaseLimit(member) + _streamBonus(a.userId);
+                  const used = _streamJoinCount(a.userId);
+                  quotaTxt = ` — ${used}/${limit} this week`;
+                }
+              }
+              rows.push(`<@${a.userId}> — ${_fmtMins(a.ms)}${quotaTxt}`);
+            }
+            lines = rows.join('\n');
+          }
 
           embeds.push(
             new EmbedBuilder()
@@ -3636,11 +3655,12 @@ client.on(Events.InteractionCreate, async interaction => {
           );
         }
 
-        return interaction.reply({
+        await historyCh.send({
           content: `Showing ${chunk.length} of ${streamHistory.length} logged stream(s), most recent first:`,
           embeds,
-          ephemeral: true,
         });
+
+        return interaction.editReply({ content: 'Posted.' });
       }
 
       // ── /host-stream ──
