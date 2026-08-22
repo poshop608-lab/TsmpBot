@@ -5192,13 +5192,20 @@ client.on(Events.InteractionCreate, async interaction => {
             });
           }
 
-          await interaction.channel.send({
-            content: approve
-              ? `✅ <@${requesterId}> approved for **${model.name}**.`
-              : `❌ <@${requesterId}>'s request for **${model.name}** was declined.`,
-          }).catch(() => {});
+          // DM the requester since the ticket channel is about to be
+          // deleted — no transcript, no lingering channel, per spec.
+          const requesterMember = await interaction.guild.members.fetch(requesterId).catch(() => null);
+          if (requesterMember) {
+            await requesterMember.send(
+              approve
+                ? `✅ You've been approved for **${model.name}** — check the Custom Models tab on the site.`
+                : `❌ Your request for **${model.name}** was declined.`
+            ).catch(() => {});
+          }
 
-          return interaction.editReply({ content: 'Done.' });
+          await interaction.editReply({ content: 'Done — closing this ticket.' });
+          setTimeout(() => interaction.channel.delete().catch(() => {}), 2000);
+          return;
         } catch (e) {
           console.error('[model approve/decline] failed:', e.message);
           return interaction.editReply({ content: 'Something went wrong — try again.' });
