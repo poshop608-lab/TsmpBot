@@ -1520,7 +1520,7 @@ const signalDrafts = new Map(); // userId -> { asset, direction, stop, tp }
 // to the website via the Worker, and returns the posted message (or null if
 // the channel/post failed). Shared by both the "Level" and "Signal" paths so
 // the outcome-button wiring and web-save call only exist in one place.
-async function _postSignal(guild, user, { level, note, extraFields }) {
+async function _postSignal(guild, user, { level, note, extraFields, asset, direction, stop }) {
   const ch = guild.channels.cache.get(SIGNALS_CH_ID);
   if (!ch) return null;
 
@@ -1558,6 +1558,9 @@ async function _postSignal(guild, user, { level, note, extraFields }) {
         username: user.username,
         level: String(level),
         note: note || null,
+        asset: asset || null,
+        direction: direction || null,
+        stop: stop || null,
         messageId: msg.id,
       }),
     });
@@ -4954,6 +4957,9 @@ client.on(Events.InteractionCreate, async interaction => {
         const msg = await _postSignal(interaction.guild, interaction.user, {
           level: draft.tp,
           note: null,
+          asset: draft.asset,
+          direction: draft.direction,
+          stop: draft.stop,
           extraFields: [
             { name: 'Asset', value: draft.asset, inline: true },
             { name: 'Direction', value: draft.direction, inline: true },
@@ -5954,7 +5960,47 @@ setInterval(async () => {
     }
     orPollState = null;
   }
+
+  // 5:00 PM ET — DM anyone whose signal from today is still pending (no
+  // outcome picked yet). Runs daily, guarded by lastSignalReminderDate so a
+  // slow tick or restart can't double-send within the same day.
+  if (hh === 17 && mm === 0 && lastSignalReminderDate !== dateKey) {
+    lastSignalReminderDate = dateKey;
+    _remindPendingSignals(guild, dateKey).catch(e => console.error('[signal reminder] failed:', e.message));
+  }
 }, 30 * 1000);
+
+let lastSignalReminderDate = null;
+
+async function _remindPendingSignals(guild, dateKey) {
+  const r = await fetch('https://smp-join.poshop608.workers.dev/bot/signals', {
+    headers: { 'Authorization': `Bot ${process.env.TOKEN}` },
+  });
+  const d = await r.json().catch(() => ({ ok: false }));
+  if (!d.ok) return;
+
+  const pendingToday = d.signals.filter(s => {
+    if (s.outcome) return false;
+    const sigDateKey = new Date(s.createdAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    return sigDateKey === dateKey;
+  });
+
+  // One reminder per user, even if they dropped multiple pending signals.
+  const byUser = new Map();
+  for (const sig of pendingToday) {
+    if (!byUser.has(sig.discordId)) byUser.set(sig.discordId, []);
+    byUser.get(sig.discordId).push(sig);
+  }
+
+  for (const [discordId, sigs] of byUser) {
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    if (!member) continue;
+    const list = sigs.map(s => `• ${s.asset ? `${s.asset} ${s.direction} — ` : ''}${s.level}`).join('\n');
+    await member.send(
+      `You dropped ${sigs.length === 1 ? 'a signal' : `${sigs.length} signals`} today that still ${sigs.length === 1 ? "doesn't" : "don't"} have an outcome set:\n${list}\n\nHead to the signal message in <#${SIGNALS_CH_ID}> and click W, L, or Criteria Not Met.`
+    ).catch(() => {});
+  }
+}
 
 // Invite create
 client.on(Events.InviteCreate, invite => {
