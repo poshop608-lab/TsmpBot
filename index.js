@@ -1498,6 +1498,16 @@ const STAFF_ROLE_IDS = [
   '1510299206990958865', // ⬡ Moderator
 ];
 
+const ASSISTANT_COACH_ROLE_ID = '1508394582952509490';
+
+// /dropsignal eligibility: any Volume tier, staff, or Assistant Coach.
+function _canDropSignal(member) {
+  const hasVolume = Object.values(VOLUME_ROLES).some(v => member.roles.cache.has(v.id));
+  const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
+  const isAssistantCoach = member.roles.cache.has(ASSISTANT_COACH_ROLE_ID);
+  return hasVolume || isStaff || isAssistantCoach;
+}
+
 const NEWS_PROTOCOLS_CH_ID = '1476978704243495003';
 const ENV_CATEGORY_ID = '1469241557118095391';
 let ENV_CH_ID = null;
@@ -3898,6 +3908,29 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
 
+      // ── /dropsignal ──
+      // Any Volume tier, staff, or Assistant Coach can drop a live signal.
+      // Modal collects level + optional note; the actual post + web-save
+      // happen in the modal-submit handler below.
+      if (commandName === 'dropsignal') {
+        if (!_canDropSignal(interaction.member)) {
+          return interaction.reply({ content: 'No permission.', ephemeral: true });
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId('dropsignal_modal')
+          .setTitle('Drop a Signal');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('sig_level').setLabel('Level').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 21500')
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('sig_note').setLabel('Note (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('e.g. strong displacement / algo signature')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
       if (commandName === 'clear-welcome') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -4791,6 +4824,38 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ embeds: [endedEmbed], components: [disabledRow] });
       }
 
+      // ── Signal outcome buttons — only the person who dropped the signal
+      // can resolve it. signalId is formatted "sig_<timestamp>_<userId>", so
+      // the poster's ID is recovered directly from it rather than needing a
+      // second lookup. "|" is the field separator (see dropsignal_modal). ──
+      if (customId.startsWith('signal_outcome|')) {
+        const [, signalId, outcome] = customId.split('|');
+        const posterId = signalId.split('_').pop();
+        if (interaction.user.id !== posterId) {
+          return interaction.reply({ content: 'Only the person who dropped this signal can resolve it.', ephemeral: true });
+        }
+
+        await interaction.deferUpdate();
+
+        const outcomeLabel = { W: '✅ Win', L: '❌ Loss', criteria_not_met: '⚠️ Criteria Not Met' }[outcome] || outcome;
+        const oldEmbed = interaction.message.embeds[0];
+        const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
+          (oldEmbed.fields || []).map(f => f.name === 'Outcome' ? { name: 'Outcome', value: outcomeLabel, inline: true } : f)
+        );
+        await interaction.message.edit({ embeds: [updatedEmbed], components: [] }).catch(() => {});
+
+        try {
+          await fetch('https://smp-join.poshop608.workers.dev/bot/signals/outcome', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: signalId, outcome }),
+          });
+        } catch (e) {
+          console.error('[signal outcome] web update failed:', e.message);
+        }
+        return;
+      }
+
       // ── Force-cancel a stuck stream from /host-stream's conflict prompt,
       // then immediately post the new stream announcement the user wanted. ──
       if (customId.startsWith('stream_force_cancel_')) {
@@ -4907,6 +4972,63 @@ client.on(Events.InteractionCreate, async interaction => {
       });
 
       return interaction.editReply({ content: `Your application has been submitted. Staff will review it shortly.` });
+    }
+
+    // ── Modal submit — drop a signal ──
+    if (interaction.isModalSubmit() && interaction.customId === 'dropsignal_modal') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const level = interaction.fields.getTextInputValue('sig_level');
+      const note = interaction.fields.getTextInputValue('sig_note') || null;
+      const signalId = `sig_${Date.now()}_${interaction.user.id}`;
+
+      const ch = interaction.guild.channels.cache.get(GENERAL_CH_ID);
+      if (!ch) return interaction.editReply({ content: 'General channel not found.' });
+
+      const embed = new EmbedBuilder()
+        .setColor(0x38bdf8)
+        .setTitle('🔔 Signal')
+        .addFields(
+          { name: 'Level', value: level, inline: true },
+          { name: 'Outcome', value: 'Pending', inline: true },
+        )
+        .setFooter({ text: `Dropped by ${interaction.user.username}` })
+        .setTimestamp();
+      if (note) embed.addFields({ name: 'Note', value: note });
+
+      const msg = await ch.send({ embeds: [embed] }).catch(() => null);
+      if (!msg) return interaction.editReply({ content: 'Could not post the signal.' });
+
+      // Only the person who dropped it can resolve the outcome — the buttons
+      // check interaction.user.id against this same signalId on click.
+      // customId uses "|" as the field separator (never appears in signalId or
+      // outcome codes) so parsing on click can't be confused by the underscores
+      // already present inside signalId itself.
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|W`).setLabel('W').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
+      );
+      await msg.edit({ embeds: [embed], components: [row] }).catch(() => {});
+
+      try {
+        await fetch('https://smp-join.poshop608.workers.dev/bot/signals', {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: signalId,
+            discordId: interaction.user.id,
+            username: interaction.user.username,
+            level,
+            note,
+            messageId: msg.id,
+          }),
+        });
+      } catch (e) {
+        console.error('[dropsignal] web save failed:', e.message);
+      }
+
+      return interaction.editReply({ content: 'Signal dropped.' });
     }
 
   } catch (err) {

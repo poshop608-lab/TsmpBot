@@ -305,6 +305,10 @@ const commands = [
     .setDescription('Create a giveaway with a live enter button and spin-the-wheel reveal (staff only)'),
 
   new SlashCommandBuilder()
+    .setName('dropsignal')
+    .setDescription('Drop a live signal — posts in general and shows on the website (Volume/staff/Assistant Coach)'),
+
+  new SlashCommandBuilder()
     .setName('setup-freechat')
     .setDescription('Post the user guide embed in free chat channel (staff only)'),
 
