@@ -1499,6 +1499,7 @@ const STAFF_ROLE_IDS = [
 ];
 
 const ASSISTANT_COACH_ROLE_ID = '1508394582952509490';
+const SIGNALS_CH_ID = '1534128320612925500'; // /dropsignal always posts here, regardless of which channel the command was run in
 
 // /dropsignal eligibility: any Volume tier, staff, or Assistant Coach.
 function _canDropSignal(member) {
@@ -1506,6 +1507,65 @@ function _canDropSignal(member) {
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
   const isAssistantCoach = member.roles.cache.has(ASSISTANT_COACH_ROLE_ID);
   return hasVolume || isStaff || isAssistantCoach;
+}
+
+// In-progress "Signal" path drafts (asset/direction picked via buttons, then
+// stop/TP via modal), keyed by userId — the multi-step button/modal chain has
+// no other way to carry state between separate Discord interactions. Cleared
+// once sent, cancelled, or naturally stale after a while (best-effort sweep
+// isn't needed given how short-lived these are in practice).
+const signalDrafts = new Map(); // userId -> { asset, direction, stop, tp }
+
+// Posts a finished signal to SIGNALS_CH_ID with W/L/Criteria buttons, saves it
+// to the website via the Worker, and returns the posted message (or null if
+// the channel/post failed). Shared by both the "Level" and "Signal" paths so
+// the outcome-button wiring and web-save call only exist in one place.
+async function _postSignal(guild, user, { level, note, extraFields }) {
+  const ch = guild.channels.cache.get(SIGNALS_CH_ID);
+  if (!ch) return null;
+
+  const signalId = `sig_${Date.now()}_${user.id}`;
+
+  const embed = new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle('🔔 Signal')
+    .setFooter({ text: `Dropped by ${user.username}` })
+    .setTimestamp();
+  if (extraFields) embed.addFields(...extraFields);
+  embed.addFields(
+    { name: 'Level', value: String(level), inline: true },
+    { name: 'Outcome', value: 'Pending', inline: true },
+  );
+  if (note) embed.addFields({ name: 'Note', value: note });
+
+  const msg = await ch.send({ embeds: [embed] }).catch(() => null);
+  if (!msg) return null;
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|W`).setLabel('W').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
+  );
+  await msg.edit({ embeds: [embed], components: [row] }).catch(() => {});
+
+  try {
+    await fetch('https://smp-join.poshop608.workers.dev/bot/signals', {
+      method: 'POST',
+      headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: signalId,
+        discordId: user.id,
+        username: user.username,
+        level: String(level),
+        note: note || null,
+        messageId: msg.id,
+      }),
+    });
+  } catch (e) {
+    console.error('[dropsignal] web save failed:', e.message);
+  }
+
+  return msg;
 }
 
 const NEWS_PROTOCOLS_CH_ID = '1476978704243495003';
@@ -3912,23 +3972,22 @@ client.on(Events.InteractionCreate, async interaction => {
       // Any Volume tier, staff, or Assistant Coach can drop a live signal.
       // Modal collects level + optional note; the actual post + web-save
       // happen in the modal-submit handler below.
+      // ── /dropsignal ──
+      // Two paths: "Level" (quick price + note, unchanged from before) or
+      // "Signal" (structured asset/direction/stop/TP, built across several
+      // button clicks + a review step since Discord can't chain modal ->
+      // modal directly). Both end up with the same W/L/Criteria outcome
+      // buttons once posted.
       if (commandName === 'dropsignal') {
         if (!_canDropSignal(interaction.member)) {
           return interaction.reply({ content: 'No permission.', ephemeral: true });
         }
 
-        const modal = new ModalBuilder()
-          .setCustomId('dropsignal_modal')
-          .setTitle('Drop a Signal');
-        modal.addComponents(
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('sig_level').setLabel('Level').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 21500')
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('sig_note').setLabel('Note (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('e.g. strong displacement / algo signature')
-          ),
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('dropsignal_pick_level').setLabel('Level').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_pick_signal').setLabel('Signal').setStyle(ButtonStyle.Success),
         );
-        return interaction.showModal(modal);
+        return interaction.reply({ content: 'What are you dropping?', components: [row], ephemeral: true });
       }
 
       if (commandName === 'clear-welcome') {
@@ -4824,6 +4883,95 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ embeds: [endedEmbed], components: [disabledRow] });
       }
 
+      // ── /dropsignal: "Level" path — jumps straight to the quick modal. ──
+      if (customId === 'dropsignal_pick_level') {
+        const modal = new ModalBuilder()
+          .setCustomId('dropsignal_modal')
+          .setTitle('Drop a Signal — Level');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('sig_level').setLabel('Level').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 21500')
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('sig_note').setLabel('Note (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('e.g. strong displacement / algo signature')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
+      // ── /dropsignal: "Signal" path — step 1, pick the asset. ──
+      if (customId === 'dropsignal_pick_signal') {
+        signalDrafts.set(interaction.user.id, {});
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('dropsignal_asset_NQ').setLabel('NQ').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_ES').setLabel('ES').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_GOLD').setLabel('GOLD').setStyle(ButtonStyle.Primary),
+        );
+        return interaction.update({ content: 'Which asset?', components: [row] });
+      }
+
+      // ── /dropsignal: "Signal" path — step 2, pick the asset then direction. ──
+      if (customId.startsWith('dropsignal_asset_')) {
+        const draft = signalDrafts.get(interaction.user.id);
+        if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
+        draft.asset = customId.replace('dropsignal_asset_', '');
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('dropsignal_dir_Buy').setLabel('Buy').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId('dropsignal_dir_Sell').setLabel('Sell').setStyle(ButtonStyle.Danger),
+        );
+        return interaction.update({ content: `**${draft.asset}** — Buy or Sell?`, components: [row] });
+      }
+
+      // ── /dropsignal: "Signal" path — step 3, direction picked, now open the
+      // combined Stop + TP modal. ──
+      if (customId.startsWith('dropsignal_dir_')) {
+        const draft = signalDrafts.get(interaction.user.id);
+        if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
+        draft.direction = customId.replace('dropsignal_dir_', '');
+
+        const modal = new ModalBuilder()
+          .setCustomId('dropsignal_stoptp_modal')
+          .setTitle(`${draft.asset} ${draft.direction} — Stop & TP`);
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('sig_stop').setLabel('Stop (time reference)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 9:40 high or 9:03 low')
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('sig_tp').setLabel('TP (price)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 21550')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
+      // ── /dropsignal: "Signal" path — final step, review card's Send button. ──
+      if (customId === 'dropsignal_send') {
+        const draft = signalDrafts.get(interaction.user.id);
+        if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
+
+        await interaction.update({ content: 'Sending…', embeds: [], components: [] });
+
+        const msg = await _postSignal(interaction.guild, interaction.user, {
+          level: draft.tp,
+          note: null,
+          extraFields: [
+            { name: 'Asset', value: draft.asset, inline: true },
+            { name: 'Direction', value: draft.direction, inline: true },
+            { name: 'Stop', value: draft.stop, inline: true },
+          ],
+        });
+        signalDrafts.delete(interaction.user.id);
+
+        return interaction.editReply({
+          content: msg ? 'Signal dropped.' : 'Could not post the signal — check the signals channel exists.',
+        });
+      }
+
+      if (customId === 'dropsignal_cancel') {
+        signalDrafts.delete(interaction.user.id);
+        return interaction.update({ content: 'Cancelled.', embeds: [], components: [] });
+      }
+
       // ── Signal outcome buttons — only the person who dropped the signal
       // can resolve it. signalId is formatted "sig_<timestamp>_<userId>", so
       // the poster's ID is recovered directly from it rather than needing a
@@ -4980,55 +5128,40 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const level = interaction.fields.getTextInputValue('sig_level');
       const note = interaction.fields.getTextInputValue('sig_note') || null;
-      const signalId = `sig_${Date.now()}_${interaction.user.id}`;
 
-      const ch = interaction.guild.channels.cache.get(GENERAL_CH_ID);
-      if (!ch) return interaction.editReply({ content: 'General channel not found.' });
-
-      const embed = new EmbedBuilder()
-        .setColor(0x38bdf8)
-        .setTitle('🔔 Signal')
-        .addFields(
-          { name: 'Level', value: level, inline: true },
-          { name: 'Outcome', value: 'Pending', inline: true },
-        )
-        .setFooter({ text: `Dropped by ${interaction.user.username}` })
-        .setTimestamp();
-      if (note) embed.addFields({ name: 'Note', value: note });
-
-      const msg = await ch.send({ embeds: [embed] }).catch(() => null);
-      if (!msg) return interaction.editReply({ content: 'Could not post the signal.' });
-
-      // Only the person who dropped it can resolve the outcome — the buttons
-      // check interaction.user.id against this same signalId on click.
-      // customId uses "|" as the field separator (never appears in signalId or
-      // outcome codes) so parsing on click can't be confused by the underscores
-      // already present inside signalId itself.
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|W`).setLabel('W').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
-      );
-      await msg.edit({ embeds: [embed], components: [row] }).catch(() => {});
-
-      try {
-        await fetch('https://smp-join.poshop608.workers.dev/bot/signals', {
-          method: 'POST',
-          headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: signalId,
-            discordId: interaction.user.id,
-            username: interaction.user.username,
-            level,
-            note,
-            messageId: msg.id,
-          }),
-        });
-      } catch (e) {
-        console.error('[dropsignal] web save failed:', e.message);
-      }
+      const msg = await _postSignal(interaction.guild, interaction.user, { level, note });
+      if (!msg) return interaction.editReply({ content: 'Could not post the signal — check the signals channel exists.' });
 
       return interaction.editReply({ content: 'Signal dropped.' });
+    }
+
+    // ── Signal path: Stop + TP modal submit -> review card with a Send button.
+    // Doesn't post yet — the draft (asset/direction from earlier button
+    // clicks, now stop/tp) is stashed in signalDrafts and only actually sent
+    // once the Send button is clicked, per the reviewed-before-posting flow. ──
+    if (interaction.isModalSubmit() && interaction.customId === 'dropsignal_stoptp_modal') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const draft = signalDrafts.get(interaction.user.id);
+      if (!draft) return interaction.editReply({ content: 'That signal draft expired — run /dropsignal again.' });
+
+      draft.stop = interaction.fields.getTextInputValue('sig_stop');
+      draft.tp = interaction.fields.getTextInputValue('sig_tp');
+
+      const reviewEmbed = new EmbedBuilder()
+        .setColor(0x38bdf8)
+        .setTitle('Review Signal')
+        .addFields(
+          { name: 'Asset', value: draft.asset, inline: true },
+          { name: 'Direction', value: draft.direction, inline: true },
+          { name: 'Stop', value: draft.stop, inline: true },
+          { name: 'TP', value: draft.tp, inline: true },
+        );
+      const sendRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('dropsignal_send').setLabel('Send').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('dropsignal_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger),
+      );
+      return interaction.editReply({ embeds: [reviewEmbed], components: [sendRow] });
     }
 
   } catch (err) {
