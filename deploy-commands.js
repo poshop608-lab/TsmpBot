@@ -217,8 +217,9 @@ const commands = [
     .setDescription('Show past /host-stream sessions with attendance + VC minutes per person (staff only)')
     .addStringOption(opt =>
       opt.setName('date')
-        .setDescription('Only show streams from this date, ET (YYYY-MM-DD) — omit for most recent 10')
+        .setDescription('Pick a date that had a stream — leave blank for the 10 most recent')
         .setRequired(false)
+        .setAutocomplete(true)
     ),
 
   new SlashCommandBuilder()

@@ -2991,6 +2991,34 @@ async function postAccessButton(channel) {
 client.on(Events.InteractionCreate, async interaction => {
   try {
 
+    // ── Autocomplete ──
+    if (interaction.isAutocomplete()) {
+      if (interaction.commandName === 'stream-history') {
+        const focused = interaction.options.getFocused();
+        let choices = [];
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/stream-history', {
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}` },
+          });
+          const d = await r.json();
+          if (d.ok) {
+            // Distinct ET dates that actually had a stream, newest first.
+            const dates = [...new Set(
+              d.history.map(s => new Date(s.startedAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }))
+            )].sort().reverse();
+            choices = dates
+              .filter(date => date.includes(focused))
+              .slice(0, 25) // Discord caps autocomplete at 25 choices
+              .map(date => ({ name: date, value: date }));
+          }
+        } catch (e) {
+          console.error('[stream-history autocomplete] failed:', e.message);
+        }
+        return interaction.respond(choices).catch(() => {});
+      }
+      return interaction.respond([]).catch(() => {});
+    }
+
     // ── Slash commands ──
     if (interaction.isChatInputCommand()) {
       const { commandName, guild } = interaction;
