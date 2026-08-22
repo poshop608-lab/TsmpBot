@@ -3696,6 +3696,78 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: 'Posted.' });
       }
 
+      // ── /stream-leaderboard ──
+      // Ranks every Volume I-IV member by total streams attended + total VC
+      // minutes (both shown, per the "attending the most" spec covering
+      // either read), and separately flags every Volume member with zero
+      // appearances across all logged history.
+      if (commandName === 'stream-leaderboard') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        const historyCh = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+        if (!historyCh) return interaction.reply({ content: 'Stream announcement channel not found.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        let allHistory = [];
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/stream-history', {
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}` },
+          });
+          const d = await r.json();
+          if (d.ok) allHistory = d.history;
+        } catch (e) {
+          console.error('[stream-leaderboard] fetch failed:', e.message);
+        }
+
+        const stats = new Map(); // userId -> { streams: Set<index>, ms: number }
+        allHistory.forEach((s, i) => {
+          for (const a of s.attendance) {
+            if (!stats.has(a.userId)) stats.set(a.userId, { streams: new Set(), ms: 0 });
+            const st = stats.get(a.userId);
+            st.streams.add(i);
+            st.ms += a.ms;
+          }
+        });
+
+        const allVolMembers = await interaction.guild.members.fetch();
+        const volMemberIds = new Set();
+        for (const [, member] of allVolMembers) {
+          if (Object.values(VOLUME_ROLES).some(v => member.roles.cache.has(v.id))) {
+            volMemberIds.add(member.id);
+          }
+        }
+
+        const ranked = [...volMemberIds]
+          .map(id => ({ id, streams: stats.get(id)?.streams.size || 0, ms: stats.get(id)?.ms || 0 }))
+          .filter(u => u.streams > 0)
+          .sort((a, b) => b.streams - a.streams || b.ms - a.ms);
+
+        const inactive = [...volMemberIds].filter(id => !stats.has(id));
+
+        const leaderboardEmbed = new EmbedBuilder()
+          .setColor(0x38bdf8)
+          .setTitle('📊 Stream Attendance Leaderboard')
+          .setDescription(
+            ranked.length
+              ? ranked.slice(0, 20).map((u, i) => `**${i + 1}.** <@${u.id}> — ${u.streams} stream${u.streams === 1 ? '' : 's'}, ${_fmtMins(u.ms)}`).join('\n')
+              : '*No attendance logged yet.*'
+          );
+
+        const inactiveEmbed = new EmbedBuilder()
+          .setColor(0xf87171)
+          .setTitle('🚫 Never Attended')
+          .setDescription(
+            inactive.length
+              ? inactive.map(id => `<@${id}>`).join('\n').slice(0, 4000)
+              : '*Everyone with a Volume role has attended at least one stream.*'
+          );
+
+        await historyCh.send({ embeds: [leaderboardEmbed, inactiveEmbed] });
+        return interaction.editReply({ content: 'Posted.' });
+      }
+
       // ── /host-stream ──
       if (commandName === 'host-stream') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));

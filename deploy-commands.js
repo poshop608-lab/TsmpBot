@@ -222,6 +222,10 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('stream-leaderboard')
+    .setDescription('Rank Volume members by stream attendance, and flag who has never attended (staff only)'),
+
+  new SlashCommandBuilder()
     .setName('host-stream')
     .setDescription('Announce a live stream and post the Join VC gate (staff only)')
     .addChannelOption(opt =>
