@@ -1688,13 +1688,23 @@ function _streamFinalizeAndLog(stream) {
       rec.joinedAt = null;
     }
   }
-  streamHistory.push({
+  const entry = {
     vcName: stream.vcName,
     hostId: stream.hostId,
     startedAt: stream.startedAt,
     endedAt: new Date(now),
     attendance: [...stream.vcTimes.entries()].map(([userId, rec]) => ({ userId, ms: rec.totalMs })),
-  });
+  };
+  streamHistory.push(entry);
+
+  // Persist to the Worker/R2 too — streamHistory alone is in-memory and gets
+  // wiped on every Railway restart, which was silently losing all past
+  // stream logs. Best-effort: a failed save here shouldn't break End Stream.
+  fetch('https://smp-join.poshop608.workers.dev/bot/stream-history', {
+    method: 'POST',
+    headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+  }).catch(e => console.error('[stream history] web save failed:', e.message));
 }
 
 function _streamIsUnlimited(member) {
@@ -3605,7 +3615,9 @@ client.on(Events.InteractionCreate, async interaction => {
       // Shows every past /host-stream session that was ended via End Stream
       // (cancelled streams are discarded, never logged here) — start/end
       // time in ET, host, and each attendee's total minutes in that specific
-      // VC while the stream was active.
+      // VC while the stream was active. Fetches from the Worker/R2, not the
+      // local streamHistory array, since that array is wiped on every
+      // Railway restart — the Worker copy is the durable source of truth.
       if (commandName === 'stream-history') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -3613,15 +3625,34 @@ client.on(Events.InteractionCreate, async interaction => {
         const historyCh = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         if (!historyCh) return interaction.reply({ content: 'Stream announcement channel not found.', ephemeral: true });
 
-        if (!streamHistory.length) {
-          await historyCh.send({ content: 'No completed streams logged yet.' });
-          return interaction.reply({ content: 'Posted.', ephemeral: true });
-        }
-
         await interaction.deferReply({ ephemeral: true });
 
+        const dateFilter = interaction.options.getString('date'); // YYYY-MM-DD, ET
+
+        let allHistory = [];
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/stream-history', {
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}` },
+          });
+          const d = await r.json();
+          if (d.ok) allHistory = d.history;
+        } catch (e) {
+          console.error('[stream-history] fetch failed:', e.message);
+        }
+
+        let list = allHistory;
+        if (dateFilter) {
+          list = list.filter(s => new Date(s.startedAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === dateFilter);
+        }
+
+        if (!list.length) {
+          const msg = dateFilter ? `No streams logged on ${dateFilter}.` : 'No completed streams logged yet.';
+          await historyCh.send({ content: msg });
+          return interaction.editReply({ content: 'Posted.' });
+        }
+
         const embeds = [];
-        const chunk = [...streamHistory].reverse().slice(0, 10); // most recent first, Discord caps 10 embeds/msg
+        const chunk = [...list].reverse().slice(0, 10); // most recent first, Discord caps 10 embeds/msg
         for (const s of chunk) {
           let lines = '*No one logged VC time.*';
           if (s.attendance.length) {
@@ -3649,14 +3680,16 @@ client.on(Events.InteractionCreate, async interaction => {
               .setTitle(`🔊 ${s.vcName}`)
               .setDescription(
                 `Host: <@${s.hostId}>\n` +
-                `${_fmtEt(s.startedAt)} → ${_fmtEt(s.endedAt)}\n\n` +
+                `${_fmtEt(new Date(s.startedAt))} → ${_fmtEt(new Date(s.endedAt))}\n\n` +
                 `**Attendance:**\n${lines}`
               )
           );
         }
 
         await historyCh.send({
-          content: `Showing ${chunk.length} of ${streamHistory.length} logged stream(s), most recent first:`,
+          content: dateFilter
+            ? `Streams from ${dateFilter}:`
+            : `Showing ${chunk.length} of ${list.length} logged stream(s), most recent first:`,
           embeds,
         });
 

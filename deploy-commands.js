@@ -214,7 +214,12 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('stream-history')
-    .setDescription('Show past /host-stream sessions with attendance + VC minutes per person (staff only)'),
+    .setDescription('Show past /host-stream sessions with attendance + VC minutes per person (staff only)')
+    .addStringOption(opt =>
+      opt.setName('date')
+        .setDescription('Only show streams from this date, ET (YYYY-MM-DD) — omit for most recent 10')
+        .setRequired(false)
+    ),
 
   new SlashCommandBuilder()
     .setName('host-stream')
