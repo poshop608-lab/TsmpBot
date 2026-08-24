@@ -1746,7 +1746,8 @@ async function _streamHistoryEmbed(guild, entry) {
 function _streamIsUnlimited(member) {
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
   const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
-  return isStaff || isOneOnOne;
+  const isVol4 = member.roles.cache.has(VOLUME_ROLES['Vol IV'].id);
+  return isStaff || isOneOnOne || isVol4;
 }
 
 // Highest volume tier the member holds wins (Vol I < II < III < IV), so
