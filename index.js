@@ -3866,6 +3866,51 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}>, tracking joins for <#${vc.id}>.` });
       }
 
+      // ── /stream-restart-vc ──
+      // Recovery for a Railway restart wiping activeStream mid-stream: the VC
+      // is still genuinely live but the bot no longer tracks it, so Join VC
+      // shows "This stream has ended" for anyone who wasn't already clicked
+      // in. Kicks everyone currently in the VC (nobody's attendance was being
+      // tracked anyway), DMs each an explanation, then re-posts a fresh
+      // host-stream announcement for the same VC so tracking resumes. ──
+      if (commandName === 'stream-restart-vc') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+
+        const vc = interaction.options.getChannel('channel');
+        await interaction.deferReply({ ephemeral: true });
+
+        const freshVc = interaction.guild.channels.cache.get(vc.id);
+        const membersToKick = freshVc ? [...freshVc.members.values()].filter(m => !m.user.bot) : [];
+
+        let dmCount = 0;
+        for (const m of membersToKick) {
+          await m.send(
+            `A technical error reset the stream tracker while **${vc.name}** was live — you've been disconnected so nobody's attendance gets lost or miscounted. ` +
+            `Rejoin the voice channel now: a fresh **Join VC** button is up in <#${STREAM_ANNOUNCE_CH_ID}>. ` +
+            `Click it, then rejoin the VC — that's what actually marks your attendance and starts your time.`
+          ).then(() => dmCount++).catch(() => {});
+          await m.voice.disconnect('Stream tracker restarted after bot restart').catch(() => {});
+        }
+
+        if (activeStream) activeStream = null;
+
+        const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+        if (!ch) return interaction.editReply({ content: `Kicked ${membersToKick.length} (DMed ${dmCount}), but stream announcement channel not found — start tracking manually with /host-stream.` });
+
+        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0 });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId(`stream_end_${interaction.user.id}`).setLabel('End Stream').setEmoji('⏹️').setStyle(ButtonStyle.Secondary)
+        );
+        const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
+        if (!msg) return interaction.editReply({ content: `Kicked ${membersToKick.length} (DMed ${dmCount}), but could not post the new announcement — start tracking manually with /host-stream.` });
+
+        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes: new Map() };
+        return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}). Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — tracking is live again.` });
+      }
+
       // ── /cancel-stream ──
       // Fallback for when the announcement message was deleted before the
       // Cancel button could be clicked, or before the bot had it cached

@@ -259,6 +259,16 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('stream-restart-vc')
+    .setDescription('Recover stream tracking after a bot restart — kicks + DMs the VC, restarts tracking (staff only)')
+    .addChannelOption(opt =>
+      opt.setName('channel')
+        .setDescription('The voice channel the stream is currently live in')
+        .addChannelTypes(2) // GuildVoice
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('cancel-stream')
     .setDescription('Cancel the currently active stream gate (staff only)'),
 
