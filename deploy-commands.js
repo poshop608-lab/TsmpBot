@@ -210,7 +210,7 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
-    .setName('vol1-override')
+    .setName('vol-override')
     .setDescription('Grant a member (or everyone) extra streams this week on top of their volume tier base (staff only)')
     .addIntegerOption(opt =>
       opt.setName('extra_sessions')

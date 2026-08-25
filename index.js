@@ -3647,11 +3647,11 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Purged ${totalDeleted} messages from <#${targetCh.id}>.` });
       }
 
-      // ── /vol1-override ──
+      // ── /vol-override ──
       // Grants a specific member extra live sessions for the current week
       // only, on top of whatever their volume tier's base limit is. Resets
       // along with everyone else's count at the next Sunday 00:00 ET rollover.
-      if (commandName === 'vol1-override') {
+      if (commandName === 'vol-override') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
