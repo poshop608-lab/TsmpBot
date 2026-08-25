@@ -41,6 +41,28 @@ const commands = [
     .setDescription('Post all 10 news protocol images in the news-protocols channel'),
 
   new SlashCommandBuilder()
+    .setName('post-resource-access')
+    .setDescription('Post a Get Access embed for a resource in a channel (staff only)')
+    .addStringOption(opt =>
+      opt.setName('resource')
+        .setDescription('Which resource')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Asia Mech Model', value: 'asia-mech' },
+          { name: 'London Mech Model', value: 'london-mech' },
+          { name: 'Trinity Framework', value: 'trinity' },
+          { name: 'Goldbach Time & PO3 Ranges', value: 'gbt' },
+          { name: 'News Protocols', value: 'news-protocols' },
+          { name: '22 Model Refined', value: 'model22' },
+          { name: 'Quarterly Theory Model', value: 'qtmodel' },
+          { name: 'Notes Archive', value: 'notes' },
+        ))
+    .addChannelOption(opt =>
+      opt.setName('channel')
+        .setDescription('Channel to post in (defaults to this channel)')
+        .setRequired(false)),
+
+  new SlashCommandBuilder()
     .setName('test-welcome')
     .setDescription('Test the welcome card in the welcome channel'),
 
@@ -189,18 +211,18 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('vol1-override')
-    .setDescription('Grant a member extra streams this week on top of their volume tier base (staff only)')
-    .addUserOption(opt =>
-      opt.setName('member')
-        .setDescription('The member to grant extra streams to')
-        .setRequired(true)
-    )
+    .setDescription('Grant a member (or everyone) extra streams this week on top of their volume tier base (staff only)')
     .addIntegerOption(opt =>
       opt.setName('extra_sessions')
         .setDescription('How many extra streams to add on top of their tier base (Vol I: 2, Vol II: 3, Vol III/IV: 5)')
         .setRequired(true)
         .setMinValue(0)
         .setMaxValue(3)
+    )
+    .addUserOption(opt =>
+      opt.setName('member')
+        .setDescription('The member to grant extra streams to — omit to grant everyone with a Volume role')
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()

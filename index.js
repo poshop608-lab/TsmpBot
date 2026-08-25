@@ -3656,8 +3656,19 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
         const targetUser = interaction.options.getUser('member');
-        const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
         const extra = interaction.options.getInteger('extra_sessions');
+
+        if (!targetUser) {
+          await interaction.deferReply({ ephemeral: true });
+          const allMembers = await interaction.guild.members.fetch();
+          const volMembers = allMembers.filter(m => Object.values(VOLUME_ROLES).some(v => m.roles.cache.has(v.id)));
+          for (const m of volMembers.values()) _streamSetBonus(m.id, extra);
+          return interaction.editReply({
+            content: `✅ Granted +${extra} bonus streams this week to all ${volMembers.size} Volume member(s). Resets Sunday 00:00 ET.`,
+          });
+        }
+
+        const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
         _streamSetBonus(targetUser.id, extra);
 
         const baseLimit = targetMember ? _streamBaseLimit(targetMember) : STREAM_TIER_LIMITS['Vol I'];
