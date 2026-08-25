@@ -1520,7 +1520,7 @@ const signalDrafts = new Map(); // userId -> { asset, direction, stop, tp }
 // to the website via the Worker, and returns the posted message (or null if
 // the channel/post failed). Shared by both the "Level" and "Signal" paths so
 // the outcome-button wiring and web-save call only exist in one place.
-async function _postSignal(guild, user, { level, note, extraFields, asset, direction, stop }) {
+async function _postSignal(guild, user, { level, note, extraFields, asset, direction, stop, addStopTpButton }) {
   const ch = guild.channels.cache.get(SIGNALS_CH_ID);
   if (!ch) return null;
 
@@ -1541,12 +1541,18 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
   const msg = await ch.send({ embeds: [embed] }).catch(() => null);
   if (!msg) return null;
 
-  const row = new ActionRowBuilder().addComponents(
+  const rowButtons = [
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|W`).setLabel('W').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
-  );
-  await msg.edit({ embeds: [embed], components: [row] }).catch(() => {});
+  ];
+  const rows = [new ActionRowBuilder().addComponents(...rowButtons)];
+  if (addStopTpButton) {
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`dropsignal_addstoptp_${signalId}`).setLabel('Add Stop & TP').setStyle(ButtonStyle.Primary),
+    ));
+  }
+  await msg.edit({ embeds: [embed], components: rows }).catch(() => {});
 
   try {
     await fetch('https://smp-join.poshop608.workers.dev/bot/signals', {
@@ -5107,16 +5113,53 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: `**${draft.asset}** — Buy or Sell?`, components: [row] });
       }
 
-      // ── /dropsignal: "Signal" path — step 3, direction picked, now open the
-      // combined Stop + TP modal. ──
+      // ── /dropsignal: "Signal" path — step 3, direction picked. Posts
+      // immediately with Stop/TP marked "Pending" so the signal is live with
+      // no delay — Stop/TP are added a few seconds later via the "Add Stop
+      // & TP" button on the posted message, instead of blocking the initial
+      // post on typing them into a modal first. ──
       if (customId.startsWith('dropsignal_dir_')) {
         const draft = signalDrafts.get(interaction.user.id);
         if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
         draft.direction = customId.replace('dropsignal_dir_', '');
 
+        await interaction.update({ content: 'Sending…', components: [] });
+
+        const msg = await _postSignal(interaction.guild, interaction.user, {
+          level: 'Pending',
+          note: null,
+          asset: draft.asset,
+          direction: draft.direction,
+          stop: null,
+          extraFields: [
+            { name: 'Asset', value: draft.asset, inline: true },
+            { name: 'Direction', value: draft.direction, inline: true },
+            { name: 'Stop', value: 'Pending', inline: true },
+          ],
+          addStopTpButton: true,
+        });
+        signalDrafts.delete(interaction.user.id);
+
+        return interaction.editReply({
+          content: msg ? 'Signal dropped — add Stop & TP from the message when ready.' : 'Could not post the signal — check the signals channel exists.',
+        });
+      }
+
+      // ── /dropsignal: Add Stop & TP after the fact — button lives on the
+      // just-posted message, only the poster can use it. messageId is
+      // threaded through the modal's custom_id since a modal-submit
+      // interaction doesn't carry interaction.message the way this button
+      // click does — this is the only chance to capture it. ──
+      if (customId.startsWith('dropsignal_addstoptp_')) {
+        const signalId = customId.replace('dropsignal_addstoptp_', '');
+        const posterId = signalId.split('_').pop();
+        if (interaction.user.id !== posterId) {
+          return interaction.reply({ content: 'Only the person who dropped this signal can add Stop & TP.', ephemeral: true });
+        }
+
         const modal = new ModalBuilder()
-          .setCustomId('dropsignal_stoptp_modal')
-          .setTitle(`${draft.asset} ${draft.direction} — Stop & TP`);
+          .setCustomId(`dropsignal_stoptp_modal|${signalId}|${interaction.message.id}`)
+          .setTitle('Add Stop & TP');
         modal.addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder().setCustomId('sig_stop').setLabel('Stop (time reference)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 9:40 high or 9:03 low')
@@ -5126,32 +5169,6 @@ client.on(Events.InteractionCreate, async interaction => {
           ),
         );
         return interaction.showModal(modal);
-      }
-
-      // ── /dropsignal: "Signal" path — final step, review card's Send button. ──
-      if (customId === 'dropsignal_send') {
-        const draft = signalDrafts.get(interaction.user.id);
-        if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
-
-        await interaction.update({ content: 'Sending…', embeds: [], components: [] });
-
-        const msg = await _postSignal(interaction.guild, interaction.user, {
-          level: draft.tp,
-          note: null,
-          asset: draft.asset,
-          direction: draft.direction,
-          stop: draft.stop,
-          extraFields: [
-            { name: 'Asset', value: draft.asset, inline: true },
-            { name: 'Direction', value: draft.direction, inline: true },
-            { name: 'Stop', value: draft.stop, inline: true },
-          ],
-        });
-        signalDrafts.delete(interaction.user.id);
-
-        return interaction.editReply({
-          content: msg ? 'Signal dropped.' : 'Could not post the signal — check the signals channel exists.',
-        });
       }
 
       if (customId === 'dropsignal_cancel') {
@@ -5380,33 +5397,43 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply({ content: 'Signal dropped.' });
     }
 
-    // ── Signal path: Stop + TP modal submit -> review card with a Send button.
-    // Doesn't post yet — the draft (asset/direction from earlier button
-    // clicks, now stop/tp) is stashed in signalDrafts and only actually sent
-    // once the Send button is clicked, per the reviewed-before-posting flow. ──
-    if (interaction.isModalSubmit() && interaction.customId === 'dropsignal_stoptp_modal') {
+    // ── Signal path: Add Stop & TP modal submit — signal is already live
+    // (posted the instant asset+direction were picked), this just patches
+    // the existing message's Stop/Level(TP) fields and removes the button,
+    // instead of holding the whole signal back behind a review step. ──
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('dropsignal_stoptp_modal|')) {
       await interaction.deferReply({ ephemeral: true });
 
-      const draft = signalDrafts.get(interaction.user.id);
-      if (!draft) return interaction.editReply({ content: 'That signal draft expired — run /dropsignal again.' });
+      const [, signalId, messageId] = interaction.customId.split('|');
+      const stop = interaction.fields.getTextInputValue('sig_stop');
+      const tp = interaction.fields.getTextInputValue('sig_tp');
 
-      draft.stop = interaction.fields.getTextInputValue('sig_stop');
-      draft.tp = interaction.fields.getTextInputValue('sig_tp');
+      const ch = guild.channels.cache.get(SIGNALS_CH_ID);
+      const msg = ch && await ch.messages.fetch(messageId).catch(() => null);
+      if (!msg) return interaction.editReply({ content: 'Could not find the original signal message — it may have been deleted.' });
 
-      const reviewEmbed = new EmbedBuilder()
-        .setColor(0x38bdf8)
-        .setTitle('Review Signal')
-        .addFields(
-          { name: 'Asset', value: draft.asset, inline: true },
-          { name: 'Direction', value: draft.direction, inline: true },
-          { name: 'Stop', value: draft.stop, inline: true },
-          { name: 'TP', value: draft.tp, inline: true },
-        );
-      const sendRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('dropsignal_send').setLabel('Send').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('dropsignal_cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger),
+      const oldEmbed = msg.embeds[0];
+      const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
+        (oldEmbed.fields || []).map(f => {
+          if (f.name === 'Stop') return { name: 'Stop', value: stop, inline: true };
+          if (f.name === 'Level') return { name: 'Level', value: tp, inline: true };
+          return f;
+        })
       );
-      return interaction.editReply({ embeds: [reviewEmbed], components: [sendRow] });
+      const outcomeRow = msg.components[0];
+      await msg.edit({ embeds: [updatedEmbed], components: outcomeRow ? [outcomeRow] : [] }).catch(() => {});
+
+      try {
+        await fetch('https://smp-join.poshop608.workers.dev/bot/signals/update', {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: signalId, stop, level: tp }),
+        });
+      } catch (e) {
+        console.error('[dropsignal addstoptp] web update failed:', e.message);
+      }
+
+      return interaction.editReply({ content: 'Stop & TP added.' });
     }
 
   } catch (err) {
