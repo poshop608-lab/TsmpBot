@@ -4792,7 +4792,7 @@ client.on(Events.InteractionCreate, async interaction => {
           'gbt':            'https://smartmoneysequence.com/models/gbt/',
           'news-protocols': 'https://smartmoneysequence.com/models/news-protocols/',
         };
-        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model', 'nyam-mech': 'NYAM Mech Model', 'trinity': 'Trinity Framework', 'gbt': 'Goldbach Time & PO3 Ranges', 'model22': '22 Model Refined', 'news-protocols': 'News Protocols' };
+        const RESOURCE_NAMES = { 'asia-mech': 'Asia Mech Model', 'london-mech': 'London Mech Model', 'nyam-mech': 'NYAM Mech Model', 'trinity': 'Trinity Framework', 'gbt': 'Goldbach Time & PO3 Ranges', 'model22': '22 Model Refined', 'news-protocols': 'News Protocols', 'qtmodel': 'Quarterly Theory Model' };
 
         if (resource === 'nyam-mech') {
           return interaction.editReply({ content: 'NYAM Mech Model is still in development — not available yet. Check back soon.' });
@@ -4867,8 +4867,9 @@ client.on(Events.InteractionCreate, async interaction => {
           gbtime: 'https://drive.google.com/drive/folders/1Hj2fUcis953mBWRBQ6nL_aiy_al2vj8Q?usp=drive_link',
           po3: 'https://drive.google.com/drive/folders/1d5sGeSKNkGMfTWpI0eQMzEZ-R9epS8hL?usp=drive_link',
           model22: 'https://1drv.ms/f/c/347c2f5edb3cd159/IgAgsivVreIsQYmvNWCmIFfKAazhNEpTC0suSGFWRMRAVxg?e=503cOV',
+          qtmodel: 'https://drive.google.com/drive/folders/1zyNgFx6CYKlT4JLireZ9NgFcyu38q1Z_?usp=drive_link',
         };
-        const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined' };
+        const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined', qtmodel: 'Quarterly Theory Model' };
         const seriesLabel = VIDEO_SERIES_LABELS[seriesKey] || seriesKey;
         const link = VIDEO_DRIVE_LINKS[seriesKey];
 
