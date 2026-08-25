@@ -1533,7 +1533,7 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
     .setTimestamp();
   if (extraFields) embed.addFields(...extraFields);
   embed.addFields(
-    { name: 'Level', value: String(level), inline: true },
+    { name: direction ? 'Take Profit' : 'Level', value: String(level), inline: true },
     { name: 'Outcome', value: 'Pending', inline: true },
   );
   if (note) embed.addFields({ name: 'Note', value: note });
@@ -5416,7 +5416,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
         (oldEmbed.fields || []).map(f => {
           if (f.name === 'Stop') return { name: 'Stop', value: stop, inline: true };
-          if (f.name === 'Level') return { name: 'Level', value: tp, inline: true };
+          if (f.name === 'Take Profit') return { name: 'Take Profit', value: tp, inline: true };
           return f;
         })
       );
