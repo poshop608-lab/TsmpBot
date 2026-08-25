@@ -5408,7 +5408,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const stop = interaction.fields.getTextInputValue('sig_stop');
       const tp = interaction.fields.getTextInputValue('sig_tp');
 
-      const ch = guild.channels.cache.get(SIGNALS_CH_ID);
+      const ch = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
       const msg = ch && await ch.messages.fetch(messageId).catch(() => null);
       if (!msg) return interaction.editReply({ content: 'Could not find the original signal message — it may have been deleted.' });
 
