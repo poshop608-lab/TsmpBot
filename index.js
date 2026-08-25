@@ -3907,8 +3907,14 @@ client.on(Events.InteractionCreate, async interaction => {
         const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
         if (!msg) return interaction.editReply({ content: `Kicked ${membersToKick.length} (DMed ${dmCount}), but could not post the new announcement — start tracking manually with /host-stream.` });
 
-        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes: new Map() };
-        return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}). Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — tracking is live again.` });
+        // Credit each kicked member 10 min of attendance up front — they were
+        // genuinely in the VC while tracking was down, losing real time
+        // through no fault of their own. Pre-seeded here so it's already in
+        // vcTimes before they even rejoin, and just keeps accruing from there.
+        const vcTimes = new Map(membersToKick.map(m => [m.id, { joinedAt: null, totalMs: 10 * 60 * 1000 }]));
+
+        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes };
+        return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — tracking is live again.` });
       }
 
       // ── /cancel-stream ──
