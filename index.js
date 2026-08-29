@@ -143,72 +143,112 @@ GlobalFonts.registerFromPath(FONT_BASE + 'plus-jakarta-sans-latin-300-italic.wof
 
 const fs = require('fs');
 
+// Shared diamond-mark helper for the welcome/join/winner cards — the site's
+// own glyph (glowing rotated square, bracket ticks at the four points, solid
+// core), drawn large as the card's visual anchor instead of a logo image.
+function drawDiamondPath(ctx, cx, cy, r) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r, cy);
+  ctx.lineTo(cx, cy + r);
+  ctx.lineTo(cx - r, cy);
+  ctx.closePath();
+}
+
+function drawCornerTicks(ctx, w, h, pad, len, color) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  const corners = [
+    [pad, pad, 1, 1], [w - pad, pad, -1, 1],
+    [pad, h - pad, 1, -1], [w - pad, h - pad, -1, -1],
+  ];
+  for (const [x, y, sx, sy] of corners) {
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + sx * len, y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + sy * len); ctx.stroke();
+  }
+}
+
+function drawBigDiamondMark(ctx, cx, cy, r) {
+  ctx.save();
+  [1.6, 1.32].forEach((mult, i) => {
+    ctx.strokeStyle = `rgba(56,189,248,${0.10 - i * 0.03})`;
+    ctx.lineWidth = 1.4;
+    drawDiamondPath(ctx, cx, cy, r * mult);
+    ctx.stroke();
+  });
+  ctx.shadowColor = 'rgba(56,189,248,.75)';
+  ctx.shadowBlur = r * 0.35;
+  ctx.strokeStyle = '#7dd3fc';
+  ctx.lineWidth = r * 0.11;
+  drawDiamondPath(ctx, cx, cy, r);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = r * 0.045;
+  ctx.lineCap = 'round';
+  const tick = r * 0.4;
+  const pts = [[cx, cy - r * 1.42], [cx + r * 1.42, cy], [cx, cy + r * 1.42], [cx - r * 1.42, cy]];
+  const dirs = [[0, 1], [-1, 0], [0, -1], [1, 0]];
+  pts.forEach(([x, y], i) => {
+    const [dx, dy] = dirs[i];
+    ctx.beginPath();
+    ctx.moveTo(x - dx * tick / 2, y - dy * tick / 2);
+    ctx.lineTo(x + dx * tick / 2, y + dy * tick / 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = '#38bdf8';
+  drawDiamondPath(ctx, cx, cy, r * 0.28);
+  ctx.fill();
+  ctx.restore();
+}
+
 async function buildWelcomeCard(member, memberCount) {
   const W = 960, H = 360;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = '#090909';
+  ctx.fillStyle = '#040308';
   ctx.fillRect(0, 0, W, H);
 
-  const atmo = ctx.createRadialGradient(W * 0.78, H * 0.1, 0, W * 0.78, H * 0.1, W * 0.55);
-  atmo.addColorStop(0, 'rgba(255,255,255,0.035)');
-  atmo.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = atmo;
-  ctx.fillRect(0, 0, W, H);
+  const markX = 165, markY = H / 2;
+  const glow = ctx.createRadialGradient(markX, markY, 10, markX, markY, 260);
+  glow.addColorStop(0, 'rgba(56,189,248,.14)');
+  glow.addColorStop(1, 'rgba(56,189,248,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
 
-  ctx.strokeStyle = '#232323';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(12, 12, W - 24, H - 24);
+  drawCornerTicks(ctx, W, H, 14, 26, 'rgba(125,211,252,.45)');
+  ctx.strokeStyle = 'rgba(56,189,248,.16)'; ctx.lineWidth = 1;
+  ctx.strokeRect(12.5, 12.5, W - 25, H - 25);
 
-  const logoData = fs.readFileSync(LOGO_PATH);
-  const logo = await loadImage(logoData);
-  const logoH = 250;
-  const logoW = (logo.width / logo.height) * logoH;
-  const logoX = 38;
-  const logoY = (H - logoH) / 2;
-  ctx.drawImage(logo, logoX, logoY, logoW, logoH);
-
-  const fadeLeft = ctx.createLinearGradient(logoX, 0, logoX + 30, 0);
-  fadeLeft.addColorStop(0, '#090909'); fadeLeft.addColorStop(1, 'rgba(9,9,9,0)');
-  ctx.fillStyle = fadeLeft; ctx.fillRect(logoX, logoY, 30, logoH);
-
-  const fadeTop = ctx.createLinearGradient(0, logoY, 0, logoY + 30);
-  fadeTop.addColorStop(0, '#090909'); fadeTop.addColorStop(1, 'rgba(9,9,9,0)');
-  ctx.fillStyle = fadeTop; ctx.fillRect(logoX, logoY, logoW, 30);
-
-  const fadeBot = ctx.createLinearGradient(0, logoY + logoH - 30, 0, logoY + logoH);
-  fadeBot.addColorStop(0, 'rgba(9,9,9,0)'); fadeBot.addColorStop(1, '#090909');
-  ctx.fillStyle = fadeBot; ctx.fillRect(logoX, logoY + logoH - 30, logoW, 30);
-
-  const fadeRight = ctx.createLinearGradient(logoX + logoW - 50, 0, logoX + logoW + 10, 0);
-  fadeRight.addColorStop(0, 'rgba(9,9,9,0)'); fadeRight.addColorStop(1, '#090909');
-  ctx.fillStyle = fadeRight; ctx.fillRect(logoX + logoW - 50, logoY, 60, logoH);
-
-  const halo = ctx.createRadialGradient(logoX + logoW / 2, H / 2, 20, logoX + logoW / 2, H / 2, 150);
-  halo.addColorStop(0, 'rgba(255,255,255,0.05)'); halo.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = halo; ctx.fillRect(0, 0, W, H);
+  drawBigDiamondMark(ctx, markX, markY, 78);
 
   const divX = 310;
   const divGrad = ctx.createLinearGradient(0, 40, 0, H - 40);
-  divGrad.addColorStop(0, 'rgba(255,255,255,0)');
-  divGrad.addColorStop(0.25, 'rgba(255,255,255,0.1)');
-  divGrad.addColorStop(0.75, 'rgba(255,255,255,0.1)');
-  divGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  divGrad.addColorStop(0, 'rgba(56,189,248,0)');
+  divGrad.addColorStop(0.25, 'rgba(56,189,248,.28)');
+  divGrad.addColorStop(0.75, 'rgba(56,189,248,.28)');
+  divGrad.addColorStop(1, 'rgba(56,189,248,0)');
   ctx.strokeStyle = divGrad; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(divX, 40); ctx.lineTo(divX, H - 40); ctx.stroke();
 
   ctx.save();
-  ctx.translate(divX, H / 2); ctx.rotate(Math.PI / 4);
-  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
-  ctx.strokeRect(-4, -4, 8, 8);
+  ctx.translate(divX, H / 2);
+  drawDiamondPath(ctx, 0, 0, 5);
+  ctx.strokeStyle = 'rgba(125,211,252,.7)'; ctx.lineWidth = 1.2;
+  ctx.stroke();
   ctx.restore();
 
   const tX = 340;
   const rG = ctx.createLinearGradient(tX, 0, W - 50, 0);
-  rG.addColorStop(0, 'rgba(255,255,255,0.12)'); rG.addColorStop(1, 'rgba(255,255,255,0)');
+  rG.addColorStop(0, 'rgba(56,189,248,.3)'); rG.addColorStop(1, 'rgba(56,189,248,0)');
 
-  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillStyle = 'rgba(125,211,252,.65)';
   ctx.font = '10px Jakarta400';
   ctx.fillText('T H E   S M A R T   M O N E Y   P A R A D I G M', tX, 84);
 
@@ -216,26 +256,27 @@ async function buildWelcomeCard(member, memberCount) {
   ctx.beginPath(); ctx.moveTo(tX, 92); ctx.lineTo(W - 50, 92); ctx.stroke();
 
   ctx.save();
-  ctx.shadowColor = 'rgba(255,255,255,0.3)'; ctx.shadowBlur = 20;
-  ctx.fillStyle = '#f8f8f8'; ctx.font = 'bold 36px Jakarta700';
+  ctx.shadowColor = 'rgba(56,189,248,.5)'; ctx.shadowBlur = 22;
+  ctx.fillStyle = '#eae6dc'; ctx.font = 'bold 36px Jakarta700';
   const displayName = member.user.displayName || member.user.username;
   ctx.fillText(`Welcome, ${displayName}`, tX, 148);
   ctx.restore();
 
-  ctx.save();
-  ctx.shadowColor = 'rgba(255,255,255,0.06)'; ctx.shadowBlur = 8;
-  ctx.fillStyle = 'rgba(255,255,255,0.32)'; ctx.font = 'italic 13px Jakarta300i';
+  ctx.fillStyle = 'rgba(234,230,220,.4)';
+  ctx.font = 'italic 13px Jakarta300i';
   ctx.fillText('The market is engineered. Learn the engineering.', tX, 177);
-  ctx.restore();
 
   ctx.strokeStyle = rG;
   ctx.beginPath(); ctx.moveTo(tX, 193); ctx.lineTo(W - 50, 193); ctx.stroke();
 
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.font = '12px Jakarta400';
-  ctx.fillText(`Member  #${memberCount}`, tX, 220);
+  ctx.fillStyle = 'rgba(234,230,220,.32)';
+  ctx.font = '11px Jakarta400';
+  ctx.fillText('MEMBER', tX, 220);
+  ctx.fillStyle = '#7dd3fc';
+  ctx.font = 'bold 20px Jakarta700';
+  ctx.fillText(`#${memberCount}`, tX + 78, 224);
 
-  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillStyle = 'rgba(234,230,220,.16)';
   ctx.font = 'italic 11px Jakarta300i';
   ctx.fillText('— The Smart Money Paradigm', tX, 300);
 
@@ -2059,7 +2100,7 @@ async function _spinGiveaway(interaction, messageId) {
     new ButtonBuilder().setCustomId(`gw_spin_${messageId}`).setLabel('🎰 Spinning...').setStyle(ButtonStyle.Danger).setDisabled(true),
   );
   const spinningEmbed = new EmbedBuilder()
-    .setColor(0xFFD700)
+    .setColor(0x38bdf8)
     .setTitle('🎰 Spinning the wheel...')
     .setDescription(`*${entrantIds.length} entrants — generating wheel...*`)
     .setFooter({ text: gw.title });
@@ -2120,78 +2161,79 @@ async function _spinGiveaway(interaction, messageId) {
 }
 
 async function _buildWinnerCard(winnerName, avatarURL, prize, title, totalEntrants) {
-  const { createCanvas, loadImage } = require('@napi-rs/canvas');
   const W = 960, H = 420;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
   const rng = (() => { let s=77; return()=>{ s=(s*1664525+1013904223)&0xffffffff; return(s>>>0)/0xffffffff; }; })();
 
-  // Deep dark bg
-  ctx.fillStyle = '#080810';
+  // Deep void bg, matches the site
+  ctx.fillStyle = '#040308';
   ctx.fillRect(0, 0, W, H);
 
-  // Cinematic center glow — purple/indigo
+  // Cinematic center glow — purple/indigo, kept as the "prize" accent
   const center = ctx.createRadialGradient(W*0.5,H*0.5,0,W*0.5,H*0.5,W*0.7);
-  center.addColorStop(0,'rgba(120,60,255,0.12)');
-  center.addColorStop(0.4,'rgba(60,30,180,0.08)');
+  center.addColorStop(0,'rgba(120,60,255,0.09)');
+  center.addColorStop(0.4,'rgba(56,30,180,0.06)');
   center.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=center; ctx.fillRect(0,0,W,H);
 
-  // Left warm gold glow behind avatar
+  // Cyan glow behind avatar
   const avatarX=195, avatarY=H/2, avatarR=82;
-  const aura=ctx.createRadialGradient(avatarX,avatarY,0,avatarX,avatarY,220);
-  aura.addColorStop(0,'rgba(255,200,0,0.18)');
-  aura.addColorStop(0.5,'rgba(255,150,0,0.08)');
+  const aura=ctx.createRadialGradient(avatarX,avatarY,0,avatarX,avatarY,240);
+  aura.addColorStop(0,'rgba(56,189,248,0.16)');
+  aura.addColorStop(0.5,'rgba(29,111,165,0.07)');
   aura.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=aura; ctx.fillRect(0,0,W,H);
 
+  drawCornerTicks(ctx, W, H, 16, 26, 'rgba(125,211,252,.4)');
+
   // Star field
-  for(let i=0;i<80;i++){
-    ctx.beginPath(); ctx.arc(rng()*W,rng()*H,rng()*1.5+0.2,0,Math.PI*2);
-    ctx.fillStyle='rgba(255,255,255,'+(rng()*0.5+0.08)+')'; ctx.fill();
+  for(let i=0;i<70;i++){
+    ctx.beginPath(); ctx.arc(rng()*W,rng()*H,rng()*1.4+0.2,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,'+(rng()*0.45+0.06)+')'; ctx.fill();
   }
 
   // Confetti
-  const cc=['#FFD700','#ff6b6b','#a78bfa','#34d399','#60a5fa','#f472b6'];
-  for(let i=0;i<50;i++){
+  const cc=['#7dd3fc','#ff6b6b','#a78bfa','#34d399','#38bdf8','#f472b6'];
+  for(let i=0;i<44;i++){
     ctx.save(); ctx.translate(rng()*W,rng()*H); ctx.rotate(rng()*Math.PI*2);
-    ctx.globalAlpha=rng()*0.5+0.15;
+    ctx.globalAlpha=rng()*0.45+0.12;
     ctx.fillStyle=cc[Math.floor(rng()*cc.length)];
     ctx.fillRect(-(rng()*6+2)/2,-(rng()*2+1)/2,rng()*10+4,rng()*4+2);
     ctx.restore();
   }
   ctx.globalAlpha=1;
 
-  // Top gold shimmer bar
+  // Top cyan shimmer bar
   const topBar=ctx.createLinearGradient(0,0,W,0);
-  topBar.addColorStop(0,'rgba(255,200,0,0)');
-  topBar.addColorStop(0.3,'rgba(255,200,0,0.6)');
-  topBar.addColorStop(0.7,'rgba(255,200,0,0.6)');
-  topBar.addColorStop(1,'rgba(255,200,0,0)');
+  topBar.addColorStop(0,'rgba(56,189,248,0)');
+  topBar.addColorStop(0.3,'rgba(56,189,248,0.5)');
+  topBar.addColorStop(0.7,'rgba(56,189,248,0.5)');
+  topBar.addColorStop(1,'rgba(56,189,248,0)');
   ctx.fillStyle=topBar; ctx.fillRect(0,0,W,2);
 
   // Bottom purple shimmer bar
   const botBar=ctx.createLinearGradient(0,0,W,0);
   botBar.addColorStop(0,'rgba(180,100,255,0)');
-  botBar.addColorStop(0.3,'rgba(180,100,255,0.4)');
-  botBar.addColorStop(0.7,'rgba(180,100,255,0.4)');
+  botBar.addColorStop(0.3,'rgba(180,100,255,0.38)');
+  botBar.addColorStop(0.7,'rgba(180,100,255,0.38)');
   botBar.addColorStop(1,'rgba(180,100,255,0)');
   ctx.fillStyle=botBar; ctx.fillRect(0,H-2,W,2);
 
   // Avatar glow rings
   for(let r=0;r<3;r++){
     ctx.save();
-    ctx.shadowColor='rgba(255,200,0,0.5)'; ctx.shadowBlur=28-r*6;
+    ctx.shadowColor='rgba(56,189,248,0.5)'; ctx.shadowBlur=28-r*6;
     ctx.beginPath(); ctx.arc(avatarX,avatarY,avatarR+5+r*4,0,Math.PI*2);
-    ctx.strokeStyle='rgba(255,200,0,'+(0.45-r*0.12)+')';
+    ctx.strokeStyle='rgba(56,189,248,'+(0.45-r*0.12)+')';
     ctx.lineWidth=1.8-r*0.3; ctx.stroke(); ctx.restore();
   }
 
-  // Avatar circle
+  // Avatar circle — real winner photo, initial/diamond fallback if it fails
   ctx.save();
   ctx.beginPath(); ctx.arc(avatarX,avatarY,avatarR,0,Math.PI*2); ctx.clip();
   const avBg=ctx.createRadialGradient(avatarX-20,avatarY-20,0,avatarX,avatarY,avatarR);
-  avBg.addColorStop(0,'#1e1830'); avBg.addColorStop(1,'#0d0b18');
+  avBg.addColorStop(0,'#0d1e30'); avBg.addColorStop(1,'#050b18');
   ctx.fillStyle=avBg; ctx.fillRect(avatarX-avatarR,avatarY-avatarR,avatarR*2,avatarR*2);
   if (avatarURL) {
     try {
@@ -2207,72 +2249,73 @@ async function _buildWinnerCard(winnerName, avatarURL, prize, title, totalEntran
   // Vertical divider with glow
   const divX=330, PAD=48;
   ctx.save();
-  ctx.shadowColor='rgba(255,200,0,0.3)'; ctx.shadowBlur=10;
+  ctx.shadowColor='rgba(56,189,248,0.3)'; ctx.shadowBlur=10;
   const divG=ctx.createLinearGradient(0,40,0,H-40);
-  divG.addColorStop(0,'rgba(255,200,0,0)');
-  divG.addColorStop(0.2,'rgba(255,200,0,0.3)');
-  divG.addColorStop(0.8,'rgba(255,200,0,0.3)');
-  divG.addColorStop(1,'rgba(255,200,0,0)');
+  divG.addColorStop(0,'rgba(56,189,248,0)');
+  divG.addColorStop(0.2,'rgba(56,189,248,0.28)');
+  divG.addColorStop(0.8,'rgba(56,189,248,0.28)');
+  divG.addColorStop(1,'rgba(56,189,248,0)');
   ctx.strokeStyle=divG; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(divX,40); ctx.lineTo(divX,H-40); ctx.stroke(); ctx.restore();
 
-  ctx.save(); ctx.translate(divX,H/2); ctx.rotate(Math.PI/4);
-  ctx.shadowColor='rgba(255,200,0,0.7)'; ctx.shadowBlur=14;
-  ctx.strokeStyle='rgba(255,200,0,0.8)'; ctx.lineWidth=1.2;
-  ctx.strokeRect(-4,-4,8,8); ctx.restore();
+  ctx.save(); ctx.translate(divX,H/2);
+  drawDiamondPath(ctx, 0, 0, 5);
+  ctx.shadowColor='rgba(56,189,248,0.7)'; ctx.shadowBlur=14;
+  ctx.strokeStyle='rgba(125,211,252,0.85)'; ctx.lineWidth=1.2;
+  ctx.stroke(); ctx.restore();
 
   const tx=divX+38;
 
   // Brand
-  ctx.fillStyle='rgba(255,255,255,0.22)'; ctx.font='10px Jakarta400';
+  ctx.fillStyle='rgba(125,211,252,0.55)'; ctx.font='10px Jakarta400';
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
   ctx.fillText('T H E   S M A R T   M O N E Y   P A R A D I G M', tx, 68);
 
   const ruleG=ctx.createLinearGradient(tx,0,W-PAD,0);
-  ruleG.addColorStop(0,'rgba(255,200,0,0.5)');
-  ruleG.addColorStop(0.4,'rgba(255,200,0,0.12)');
-  ruleG.addColorStop(1,'rgba(255,200,0,0)');
+  ruleG.addColorStop(0,'rgba(56,189,248,0.45)');
+  ruleG.addColorStop(0.4,'rgba(56,189,248,0.1)');
+  ruleG.addColorStop(1,'rgba(56,189,248,0)');
   ctx.strokeStyle=ruleG; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(tx,78); ctx.lineTo(W-PAD,78); ctx.stroke();
 
   // WINNER
   ctx.save();
-  ctx.shadowColor='rgba(255,200,0,0.9)'; ctx.shadowBlur=16;
-  ctx.fillStyle='#FFD700'; ctx.font='bold 13px Jakarta700';
+  ctx.shadowColor='rgba(56,189,248,0.85)'; ctx.shadowBlur=16;
+  ctx.fillStyle='#7dd3fc'; ctx.font='bold 13px Jakarta700';
   ctx.fillText('🏆  W I N N E R', tx, 112); ctx.restore();
 
   // Name
   const nfs=winnerName.length>18?34:winnerName.length>12?42:50;
   ctx.save();
-  ctx.shadowColor='rgba(255,255,255,0.55)'; ctx.shadowBlur=30;
-  ctx.fillStyle='#ffffff'; ctx.font='bold '+nfs+'px Jakarta700';
+  ctx.shadowColor='rgba(234,230,220,0.45)'; ctx.shadowBlur=26;
+  ctx.fillStyle='#eae6dc'; ctx.font='bold '+nfs+'px Jakarta700';
   ctx.fillText(winnerName.length>22?winnerName.slice(0,21)+'...':winnerName, tx, 178); ctx.restore();
 
   // Mid divider
   const midG=ctx.createLinearGradient(tx,0,tx+480,0);
-  midG.addColorStop(0,'rgba(255,255,255,0.18)'); midG.addColorStop(1,'rgba(255,255,255,0)');
+  midG.addColorStop(0,'rgba(234,230,220,0.16)'); midG.addColorStop(1,'rgba(234,230,220,0)');
   ctx.strokeStyle=midG; ctx.lineWidth=1;
   ctx.beginPath(); ctx.moveTo(tx,200); ctx.lineTo(tx+480,200); ctx.stroke();
 
   // PRIZE label
-  ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='10px Jakarta400';
+  ctx.fillStyle='rgba(234,230,220,0.28)'; ctx.font='10px Jakarta400';
   ctx.fillText('P R I Z E', tx, 228);
 
-  // Prize — purple glow
+  // Prize — purple glow (kept, reads as "reward" distinct from the rest of the palette)
   const pfs=prize.length>30?20:prize.length>20?24:28;
   ctx.save();
-  ctx.shadowColor='rgba(180,100,255,0.8)'; ctx.shadowBlur=18;
+  ctx.shadowColor='rgba(180,100,255,0.75)'; ctx.shadowBlur=18;
   ctx.fillStyle='#c4b5fd'; ctx.font='bold '+pfs+'px Jakarta700';
   ctx.fillText(prize.length>38?prize.slice(0,37)+'...':prize, tx, 264); ctx.restore();
 
   // Footer
-  ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.font='12px Jakarta400';
+  ctx.fillStyle='rgba(234,230,220,0.22)'; ctx.font='12px Jakarta400';
   ctx.fillText(title+'   ·   '+totalEntrants+' entrant'+(totalEntrants!==1?'s':''), tx, 318);
 
   // CONGRATULATIONS
   ctx.save();
-  ctx.shadowColor='rgba(255,200,0,0.5)'; ctx.shadowBlur=10;
-  ctx.fillStyle='rgba(255,200,0,0.4)'; ctx.font='10px Jakarta400';
+  ctx.shadowColor='rgba(56,189,248,0.45)'; ctx.shadowBlur=10;
+  ctx.fillStyle='rgba(56,189,248,0.5)'; ctx.font='10px Jakarta400';
   ctx.textAlign='right';
   ctx.fillText('C O N G R A T U L A T I O N S', W-PAD, H-PAD); ctx.restore();
 
@@ -2281,8 +2324,8 @@ async function _buildWinnerCard(winnerName, avatarURL, prize, title, totalEntran
 
 function _drawAvatarInitial(ctx, name, x, y) {
   ctx.save();
-  ctx.shadowColor='rgba(255,200,0,0.9)'; ctx.shadowBlur=22;
-  ctx.font='bold 58px Jakarta700'; ctx.fillStyle='#FFD700';
+  ctx.shadowColor='rgba(56,189,248,0.9)'; ctx.shadowBlur=22;
+  ctx.font='bold 58px Jakarta700'; ctx.fillStyle='#7dd3fc';
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillText(name[0].toUpperCase(), x, y);
   ctx.restore();
@@ -4493,7 +4536,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const prize = interaction.fields.getTextInputValue('gw_prize').trim();
 
         const embed = new EmbedBuilder()
-          .setColor(0xFFD700)
+          .setColor(0x38bdf8)
           .setTitle(`🎉  ${title}`)
           .setDescription(`🎁 **Prize:** ${prize}\n\n👥 **Entrants:** 0\n\nClick **🎟️ Enter Giveaway** to join!\nHost presses **🎰 Spin the Wheel** when ready.`)
           .setFooter({ text: 'The Smart Money Paradigm  ·  Giveaway' })
@@ -4570,7 +4613,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // Update embed count + button label
         const updatedEmbed = new EmbedBuilder()
-          .setColor(0xFFD700)
+          .setColor(0x38bdf8)
           .setTitle(`🎉  ${gw.title}`)
           .setDescription(`🎁 **Prize:** ${gw.prize}\n\n👥 **Entrants:** ${count}\n\nClick **🎟️ Enter Giveaway** to join!\nHost presses **🎰 Spin the Wheel** when ready.`)
           .setFooter({ text: 'The Smart Money Paradigm  ·  Giveaway' })
@@ -5664,93 +5707,65 @@ client.on(Events.MessageCreate, async message => {
 
 // ── Join welcome card ──
 async function _generateJoinCard(member) {
-  const { createCanvas, loadImage } = require('@napi-rs/canvas');
   const W = 800, H = 200;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
-  // BG — dark grey to black gradient left→right
   const bg = ctx.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, '#1a1a1a');
-  bg.addColorStop(0.5, '#111111');
-  bg.addColorStop(1, '#000000');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
+  bg.addColorStop(0, '#080b12'); bg.addColorStop(0.55, '#050609'); bg.addColorStop(1, '#020203');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
-  // Subtle top-left radial softness
-  const soft = ctx.createRadialGradient(0, 0, 0, 0, 0, 400);
-  soft.addColorStop(0, 'rgba(60,60,60,0.25)');
-  soft.addColorStop(1, 'transparent');
+  const markX = 92, markY = H / 2;
+  const soft = ctx.createRadialGradient(markX, markY, 4, markX, markY, 200);
+  soft.addColorStop(0, 'rgba(56,189,248,0.14)'); soft.addColorStop(1, 'transparent');
   ctx.fillStyle = soft; ctx.fillRect(0, 0, W, H);
 
-  // Top edge line — grey fade
+  drawCornerTicks(ctx, W, H, 12, 20, 'rgba(125,211,252,.4)');
+
   const topLine = ctx.createLinearGradient(0, 0, W, 0);
-  topLine.addColorStop(0, 'transparent');
-  topLine.addColorStop(0.3, 'rgba(180,180,180,0.25)');
-  topLine.addColorStop(0.7, 'rgba(180,180,180,0.25)');
-  topLine.addColorStop(1, 'transparent');
+  topLine.addColorStop(0, 'transparent'); topLine.addColorStop(0.3, 'rgba(125,211,252,0.28)');
+  topLine.addColorStop(0.7, 'rgba(125,211,252,0.28)'); topLine.addColorStop(1, 'transparent');
   ctx.fillStyle = topLine; ctx.fillRect(0, 0, W, 1);
 
-  // Bottom edge line
   const botLine = ctx.createLinearGradient(0, 0, W, 0);
-  botLine.addColorStop(0, 'transparent');
-  botLine.addColorStop(0.3, 'rgba(80,80,80,0.2)');
-  botLine.addColorStop(0.7, 'rgba(80,80,80,0.2)');
-  botLine.addColorStop(1, 'transparent');
+  botLine.addColorStop(0, 'transparent'); botLine.addColorStop(0.3, 'rgba(56,189,248,0.18)');
+  botLine.addColorStop(0.7, 'rgba(56,189,248,0.18)'); botLine.addColorStop(1, 'transparent');
   ctx.fillStyle = botLine; ctx.fillRect(0, H - 1, W, 1);
 
-  // Bot avatar — circle left
-  const logoX = 52, logoY = H / 2, logoR = 46;
-  try {
-    const botAvatarURL = client.user.displayAvatarURL({ extension: 'png', size: 128 });
-    const logoImg = await loadImage(botAvatarURL);
-    ctx.save();
-    ctx.beginPath(); ctx.arc(logoX, logoY, logoR, 0, Math.PI * 2); ctx.clip();
-    ctx.drawImage(logoImg, logoX - logoR, logoY - logoR, logoR * 2, logoR * 2);
-    ctx.restore();
-    // thin grey ring
-    ctx.beginPath(); ctx.arc(logoX, logoY, logoR + 2, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(200,200,200,0.15)'; ctx.lineWidth = 1; ctx.stroke();
-  } catch (e) {}
+  drawBigDiamondMark(ctx, markX, markY, 40);
 
-  // Vertical divider
   const div = ctx.createLinearGradient(0, 20, 0, H - 20);
-  div.addColorStop(0, 'transparent');
-  div.addColorStop(0.5, 'rgba(255,255,255,0.08)');
-  div.addColorStop(1, 'transparent');
+  div.addColorStop(0, 'transparent'); div.addColorStop(0.5, 'rgba(56,189,248,0.2)'); div.addColorStop(1, 'transparent');
   ctx.fillStyle = div;
-  ctx.fillRect(logoX + logoR + 22, 20, 1, H - 40);
+  ctx.fillRect(markX + 70, 20, 1, H - 40);
 
-  // Text
-  const tx = logoX + logoR + 44;
+  const tx = markX + 92;
 
-  // Eyebrow
-  ctx.fillStyle = 'rgba(180,180,180,0.45)';
-  ctx.font = '500 10px monospace';
-  ctx.fillText('NEW MEMBER', tx, 66);
+  ctx.fillStyle = 'rgba(125,211,252,.6)';
+  ctx.font = '10px Jakarta400';
+  ctx.fillText('N E W   M E M B E R', tx, 66);
 
-  // Username
   const username = member.user.username.length > 18
     ? member.user.username.slice(0, 17) + '…'
     : member.user.username;
-  ctx.fillStyle = '#ECECEC';
-  ctx.font = 'bold 40px sans-serif';
+  ctx.save();
+  ctx.shadowColor = 'rgba(56,189,248,.35)'; ctx.shadowBlur = 14;
+  ctx.fillStyle = '#eae6dc'; ctx.font = 'bold 38px Jakarta700';
   ctx.fillText(username, tx, 120);
+  ctx.restore();
 
-  // Subtext
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
-  ctx.font = '400 13px sans-serif';
+  ctx.fillStyle = 'rgba(234,230,220,.3)';
+  ctx.font = '13px Jakarta400';
   ctx.fillText('Smart Money Paradigm', tx, 150);
 
-  // Member count pill — bottom right
-  const tag = `Member #${member.guild.memberCount}`;
-  ctx.font = '400 11px monospace';
-  const tagW = ctx.measureText(tag).width + 22;
-  const tagX = W - tagW - 20, tagY = H - 28;
-  ctx.fillStyle = 'rgba(255,255,255,0.07)';
-  ctx.beginPath(); ctx.roundRect(tagX, tagY - 14, tagW, 22, 11); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.fillText(tag, tagX + 11, tagY + 3);
+  const tag = `MEMBER #${member.guild.memberCount}`;
+  ctx.font = '10.5px Jakarta400';
+  const tagW = ctx.measureText(tag).width + 24;
+  const tagX = W - tagW - 20, tagY = H - 30;
+  ctx.strokeStyle = 'rgba(56,189,248,.28)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.roundRect(tagX, tagY - 14, tagW, 24, 4); ctx.stroke();
+  ctx.fillStyle = 'rgba(125,211,252,.65)';
+  ctx.fillText(tag, tagX + 12, tagY + 3);
 
   return canvas.toBuffer('image/png');
 }
