@@ -3917,6 +3917,22 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — tracking is live again.` });
       }
 
+      // ── /stream-set-host ──
+      // Patches activeStream.hostId in memory, for when /stream-restart-vc
+      // (or /host-stream) was run by staff on behalf of someone else — the
+      // command defaults to crediting whoever ran it, which is wrong when
+      // staff is recovering a stream that isn't theirs. Doesn't touch anyone's
+      // voice state or the VC itself, purely a data fix. ──
+      if (commandName === 'stream-set-host') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        if (!activeStream) return interaction.reply({ content: 'No stream is currently active.', ephemeral: true });
+
+        const newHost = interaction.options.getUser('member');
+        activeStream.hostId = newHost.id;
+        return interaction.reply({ content: `✅ Host for the active stream in <#${activeStream.vcId}> set to <@${newHost.id}>.`, ephemeral: true });
+      }
+
       // ── /cancel-stream ──
       // Fallback for when the announcement message was deleted before the
       // Cancel button could be clicked, or before the bot had it cached
@@ -5305,9 +5321,25 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: 'Only the person who dropped this signal can resolve it.', ephemeral: true });
         }
 
+        // Win asks for points captured first — modal has to be the immediate
+        // response (can't deferUpdate then showModal), so this branches
+        // before the defer that L / criteria_not_met use below. Points feed
+        // the "Points Delivered" total on the Founder stats page.
+        if (outcome === 'W') {
+          const modal = new ModalBuilder()
+            .setCustomId(`signal_win_points|${signalId}|${interaction.message.id}`)
+            .setTitle('Signal Won — Points Captured');
+          modal.addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId('sig_points').setLabel('Points captured').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 1840.75')
+            ),
+          );
+          return interaction.showModal(modal);
+        }
+
         await interaction.deferUpdate();
 
-        const outcomeLabel = { W: '✅ Win', L: '❌ Loss', criteria_not_met: '⚠️ Criteria Not Met' }[outcome] || outcome;
+        const outcomeLabel = { L: '❌ Loss', criteria_not_met: '⚠️ Criteria Not Met' }[outcome] || outcome;
         const oldEmbed = interaction.message.embeds[0];
         const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
           (oldEmbed.fields || []).map(f => f.name === 'Outcome' ? { name: 'Outcome', value: outcomeLabel, inline: true } : f)
@@ -5497,6 +5529,42 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       return interaction.editReply({ content: 'Stop & TP added.' });
+    }
+
+    // ── Signal Win: points-captured modal submit — records the outcome as a
+    // Win and stores the points value, which feeds the "Points Delivered"
+    // total on the Founder stats page (sum of every winning signal's points). ──
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('signal_win_points|')) {
+      await interaction.deferReply({ ephemeral: true });
+
+      const [, signalId, messageId] = interaction.customId.split('|');
+      const pointsRaw = interaction.fields.getTextInputValue('sig_points').trim();
+      const points = Number(pointsRaw.replace(/,/g, ''));
+      if (!Number.isFinite(points)) {
+        return interaction.editReply({ content: `"${pointsRaw}" isn't a valid number — resolve the signal again and enter points as a number, e.g. 1840.75.` });
+      }
+
+      const ch = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
+      const msg = ch && await ch.messages.fetch(messageId).catch(() => null);
+      if (!msg) return interaction.editReply({ content: 'Could not find the original signal message — it may have been deleted.' });
+
+      const oldEmbed = msg.embeds[0];
+      const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
+        (oldEmbed.fields || []).map(f => f.name === 'Outcome' ? { name: 'Outcome', value: `✅ Win (+${points})`, inline: true } : f)
+      );
+      await msg.edit({ embeds: [updatedEmbed], components: [] }).catch(() => {});
+
+      try {
+        await fetch('https://smp-join.poshop608.workers.dev/bot/signals/outcome', {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: signalId, outcome: 'W', points }),
+        });
+      } catch (e) {
+        console.error('[signal win points] web update failed:', e.message);
+      }
+
+      return interaction.editReply({ content: `Marked as a win — +${points} points recorded.` });
     }
 
   } catch (err) {
