@@ -1634,23 +1634,24 @@ let MOD_LOG_CH_ID      = '1537544874063171645';  // #mod-log channel — hardcod
 let VC_ALERT_ROLE_ID   = null;  // 📅 VC Alerts role
 let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 
-// ── Live-stream Join quota (opt-in via /host-stream) ──
-// Old system auto-tracked VC time; replaced with an explicit gate: a Founder
-// runs /host-stream picking the VC, which posts a "Join VC" button. Nobody
-// enters that VC without clicking it first (live-enforced — anyone who slips
-// in without clicking gets kicked immediately, checked on every join). A
-// click both grants VC access AND locks in one weekly Join-quota use for
-// that member — no undo, no switching. Vol I is capped at 3/5 per week;
-// Vol II/III/IV, 1-on-1, and staff are unlimited but still must click to
-// enter (the click is the single gate for everyone, only the quota differs).
+// ── Live-stream Join gate (opt-in via /host-stream) ──
+// A Founder runs /host-stream picking the VC and a minimum Volume tier —
+// posts a "Join VC" button. Nobody enters that VC without clicking it first
+// (live-enforced — anyone who slips in without clicking gets kicked
+// immediately). A click grants VC access if the member's own tier is at or
+// above the stream's required tier (higher tiers can attend lower-tier
+// streams, lower tiers cannot attend higher-tier streams) — no weekly cap,
+// no quota, no bonus/override system. streamWeeklyJoins is kept purely as an
+// informational "streams attended this week" counter shown in the attendance
+// report, not a limit.
 const ONE_ON_ONE_ROLE_ID = '1539004461299539978';
-// Base weekly stream limit by volume tier. Staff and 1-on-1 role holders are
-// fully unlimited (no cap at all) — everyone else gets their tier's number.
-const STREAM_TIER_LIMITS = { 'Vol I': 2, 'Vol II': 3, 'Vol III': 5, 'Vol IV': 5 };
-const streamWeeklyJoins = new Map(); // userId -> { weekKey: string, count: number }
-const streamBonus = new Map();       // userId -> { weekKey: string, bonus: number } — staff-granted extra sessions
-let activeStream = null; // { vcId, vcName, messageId, hostId, startedAt, clickedUserIds: Set<string>, vcTimes: Map<userId, { joinedAt, totalMs }> } — null when no stream is live
-const streamHistory = []; // completed (ended, not cancelled) streams: { vcName, hostId, startedAt, endedAt, attendance: [{ userId, ms }] }
+// Tier rank, low to high — used to compare a member's highest Volume role
+// against a stream's required tier. Staff, 1-on-1, and Assistant Coach can
+// join any tier (treated as max rank).
+const STREAM_TIER_RANK = { 'Vol I': 1, 'Vol II': 2, 'Vol III': 3, 'Vol IV': 4 };
+const streamWeeklyJoins = new Map(); // userId -> { weekKey: string, count: number } — informational only
+let activeStream = null; // { vcId, vcName, messageId, hostId, startedAt, requiredTier, clickedUserIds: Set<string>, vcTimes: Map<userId, { joinedAt, totalMs }> } — null when no stream is live
+const streamHistory = []; // completed (ended, not cancelled) streams: { vcName, hostId, startedAt, endedAt, requiredTier, attendance: [{ userId, ms }] }
 
 function _fmtEt(date) {
   return date.toLocaleString('en-US', {
@@ -1663,7 +1664,7 @@ function _fmtMins(ms) {
   return `${Math.round(ms / 60000)}m`;
 }
 
-function _streamEmbed({ hostId, vcName, startedAt, joined }) {
+function _streamEmbed({ hostId, vcName, startedAt, joined, requiredTier }) {
   return new EmbedBuilder()
     .setColor(0x38bdf8)
     .setTitle('🔴 Live Stream Starting')
@@ -1672,7 +1673,7 @@ function _streamEmbed({ hostId, vcName, startedAt, joined }) {
       `Click **Join VC** to lock in this stream — no undo once clicked.`
     )
     .addFields(
-      { name: 'Weekly limit', value: 'Vol I: 2 · Vol II: 3 · Vol III/IV: 5', inline: false },
+      { name: 'Access', value: `${requiredTier} and above`, inline: false },
       { name: 'Joined', value: `${joined}`, inline: true },
       { name: 'Started', value: _fmtEt(startedAt), inline: true },
     );
@@ -1705,26 +1706,6 @@ function _streamRecordJoin(userId) {
   }
 }
 
-function _streamBonus(userId) {
-  const key = _getEtWeekKey();
-  const entry = streamBonus.get(userId);
-  if (!entry || entry.weekKey !== key) return 0;
-  return entry.bonus;
-}
-
-function _streamSetBonus(userId, bonus) {
-  const key = _getEtWeekKey();
-  streamBonus.set(userId, { weekKey: key, bonus });
-}
-
-function _streamResetQuota(userId) {
-  streamWeeklyJoins.delete(userId);
-}
-
-function _streamResetAllQuotas() {
-  streamWeeklyJoins.clear();
-}
-
 // Closes out anyone still sitting in the VC when the stream ends (they never
 // got a "leave" VoiceStateUpdate), then archives the whole session to history.
 function _streamFinalizeAndLog(stream) {
@@ -1740,6 +1721,7 @@ function _streamFinalizeAndLog(stream) {
     hostId: stream.hostId,
     startedAt: stream.startedAt,
     endedAt: new Date(now),
+    requiredTier: stream.requiredTier || null,
     attendance: [...stream.vcTimes.entries()].map(([userId, rec]) => ({ userId, ms: rec.totalMs })),
   };
   streamHistory.push(entry);
@@ -1764,18 +1746,9 @@ async function _streamHistoryEmbed(guild, entry) {
   if (entry.attendance.length) {
     const rows = [];
     for (const a of entry.attendance.sort((x, y) => y.ms - x.ms)) {
-      const member = await guild.members.fetch(a.userId).catch(() => null);
-      let quotaTxt = '';
-      if (member) {
-        if (_streamIsUnlimited(member)) {
-          quotaTxt = ' — unlimited';
-        } else {
-          const limit = _streamBaseLimit(member) + _streamBonus(a.userId);
-          const used = _streamJoinCount(a.userId);
-          quotaTxt = ` — ${used}/${limit} this week`;
-        }
-      }
-      rows.push(`<@${a.userId}> — ${_fmtMins(a.ms)}${quotaTxt}`);
+      const weekCount = _streamJoinCount(a.userId);
+      const weekTxt = weekCount ? ` — ${weekCount} stream${weekCount === 1 ? '' : 's'} this week` : '';
+      rows.push(`<@${a.userId}> — ${_fmtMins(a.ms)}${weekTxt}`);
     }
     lines = rows.join('\n');
   }
@@ -1785,27 +1758,32 @@ async function _streamHistoryEmbed(guild, entry) {
     .setTitle(`🔊 ${entry.vcName}`)
     .setDescription(
       `Host: <@${entry.hostId}>\n` +
+      `${entry.requiredTier ? `Access: ${entry.requiredTier} and above\n` : ''}` +
       `${_fmtEt(new Date(entry.startedAt))} → ${_fmtEt(new Date(entry.endedAt))}\n\n` +
       `**Attendance:**\n${lines}`
     );
 }
 
-function _streamIsUnlimited(member) {
+// Staff, 1-on-1, and Assistant Coach can join any tier — treated as max rank
+// (higher than Vol IV) regardless of which Volume role (if any) they hold.
+function _streamMemberTierRank(member) {
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
   const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
-  const isVol4 = member.roles.cache.has(VOLUME_ROLES['Vol IV'].id);
   const isAssistantCoach = member.roles.cache.has(ASSISTANT_COACH_ROLE_ID);
-  return isStaff || isOneOnOne || isVol4 || isAssistantCoach;
-}
+  if (isStaff || isOneOnOne || isAssistantCoach) return Infinity;
 
-// Highest volume tier the member holds wins (Vol I < II < III < IV), so
-// someone with both Vol I and Vol III gets Vol III's limit, not Vol I's.
-function _streamBaseLimit(member) {
   const order = ['Vol IV', 'Vol III', 'Vol II', 'Vol I'];
   for (const tier of order) {
-    if (member.roles.cache.has(VOLUME_ROLES[tier].id)) return STREAM_TIER_LIMITS[tier];
+    if (member.roles.cache.has(VOLUME_ROLES[tier].id)) return STREAM_TIER_RANK[tier];
   }
-  return STREAM_TIER_LIMITS['Vol I']; // no volume role at all — fall back to the lowest tier's cap
+  return 0; // no Volume role at all — below every tier
+}
+
+// Can this member join a stream that requires `requiredTier` (e.g. 'Vol III')?
+// Higher tiers can attend lower-tier streams; lower tiers cannot attend
+// higher-tier streams — a straight rank comparison.
+function _streamCanJoinTier(member, requiredTier) {
+  return _streamMemberTierRank(member) >= (STREAM_TIER_RANK[requiredTier] || 0);
 }
 
 // active countdown: { messageId, vcChannelName, sessionNote, host, startEpoch, intervalId, warned15 }
@@ -3690,53 +3668,6 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Purged ${totalDeleted} messages from <#${targetCh.id}>.` });
       }
 
-      // ── /vol-override ──
-      // Grants a specific member extra live sessions for the current week
-      // only, on top of whatever their volume tier's base limit is. Resets
-      // along with everyone else's count at the next Sunday 00:00 ET rollover.
-      if (commandName === 'vol-override') {
-        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
-        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
-
-        const targetUser = interaction.options.getUser('member');
-        const extra = interaction.options.getInteger('extra_sessions');
-
-        if (!targetUser) {
-          await interaction.deferReply({ ephemeral: true });
-          const allMembers = await interaction.guild.members.fetch();
-          const volMembers = allMembers.filter(m => Object.values(VOLUME_ROLES).some(v => m.roles.cache.has(v.id)));
-          for (const m of volMembers.values()) _streamSetBonus(m.id, extra);
-          return interaction.editReply({
-            content: `✅ Granted +${extra} bonus streams this week to all ${volMembers.size} Volume member(s). Resets Sunday 00:00 ET.`,
-          });
-        }
-
-        const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
-        _streamSetBonus(targetUser.id, extra);
-
-        const baseLimit = targetMember ? _streamBaseLimit(targetMember) : STREAM_TIER_LIMITS['Vol I'];
-        const newLimit = baseLimit + extra;
-        return interaction.reply({
-          content: `✅ <@${targetUser.id}> can now attend ${newLimit}/5 streams this week (base ${baseLimit} + ${extra} bonus). Resets Sunday 00:00 ET.`,
-          ephemeral: true,
-        });
-      }
-
-      // ── /reset-stream-quota ──
-      if (commandName === 'reset-stream-quota') {
-        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
-        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
-
-        const targetUser = interaction.options.getUser('member');
-        if (targetUser) {
-          _streamResetQuota(targetUser.id);
-          return interaction.reply({ content: `✅ Reset <@${targetUser.id}>'s stream quota to 0 for this week.`, ephemeral: true });
-        }
-
-        _streamResetAllQuotas();
-        return interaction.reply({ content: `✅ Reset stream quota to 0 for everyone this week.`, ephemeral: true });
-      }
-
       // ── /stream-history ──
       // Shows every past /host-stream session that was ended via End Stream
       // (cancelled streams are discarded, never logged here) — start/end
@@ -3868,11 +3799,13 @@ client.on(Events.InteractionCreate, async interaction => {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
+        const requiredTier = interaction.options.getString('tier');
+
         if (activeStream) {
           const vcOpt = interaction.options.getChannel('channel');
           const cancelRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`stream_force_cancel_${vcOpt.id}`)
+              .setCustomId(`stream_force_cancel_${requiredTier.replace(/\s+/g, '')}_${vcOpt.id}`)
               .setLabel('Cancel Active & Start New')
               .setEmoji('🛑')
               .setStyle(ButtonStyle.Danger)
@@ -3891,7 +3824,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         if (!ch) return interaction.editReply({ content: 'Stream announcement channel not found.' });
 
-        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0 });
+        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0, requiredTier });
 
         // Everyone sees Join VC. Only the button ROW differs for staff, who
         // also get Cancel Stream and End Stream — regular members never see
@@ -3905,8 +3838,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
         if (!msg) return interaction.editReply({ content: 'Could not post the stream announcement.' });
 
-        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes: new Map() };
-        return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}>, tracking joins for <#${vc.id}>.` });
+        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, clickedUserIds: new Set(), vcTimes: new Map() };
+        return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> (**${requiredTier} and above**), tracking joins for <#${vc.id}>.` });
       }
 
       // ── /stream-restart-vc ──
@@ -3921,6 +3854,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
         const vc = interaction.options.getChannel('channel');
+        const requiredTier = interaction.options.getString('tier') || 'Vol I';
         await interaction.deferReply({ ephemeral: true });
 
         const freshVc = interaction.guild.channels.cache.get(vc.id);
@@ -3941,7 +3875,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         if (!ch) return interaction.editReply({ content: `Kicked ${membersToKick.length} (DMed ${dmCount}), but stream announcement channel not found — start tracking manually with /host-stream.` });
 
-        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0 });
+        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0, requiredTier });
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger),
@@ -3956,8 +3890,8 @@ client.on(Events.InteractionCreate, async interaction => {
         // vcTimes before they even rejoin, and just keeps accruing from there.
         const vcTimes = new Map(membersToKick.map(m => [m.id, { joinedAt: null, totalMs: 10 * 60 * 1000 }]));
 
-        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes };
-        return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — tracking is live again.` });
+        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, clickedUserIds: new Set(), vcTimes };
+        return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> (**${requiredTier} and above**) — tracking is live again.` });
       }
 
       // ── /stream-set-host ──
@@ -5085,36 +5019,27 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: `You're already locked in for this stream — head to <#${activeStream.vcId}>.`, ephemeral: true });
         }
 
-        const unlimited = _streamIsUnlimited(member);
-        if (!unlimited) {
-          const limit = _streamBaseLimit(member) + _streamBonus(member.id);
-          const used = _streamJoinCount(member.id);
-          if (used >= limit) {
-            return interaction.reply({
-              content: `You've used your ${limit}/${limit} streams this week. Quota resets Sunday 00:00 ET. ` +
-                `If it's an emergency, contact the owner — or ask about a higher volume tier for more streams.`,
-              ephemeral: true,
-            });
-          }
+        if (!_streamCanJoinTier(member, activeStream.requiredTier)) {
+          return interaction.reply({
+            content: `This stream is **${activeStream.requiredTier} and above** — you don't hold a high enough Volume tier to join.`,
+            ephemeral: true,
+          });
         }
 
         activeStream.clickedUserIds.add(member.id);
-        if (!unlimited) _streamRecordJoin(member.id);
+        _streamRecordJoin(member.id);
 
         const updatedEmbed = _streamEmbed({
           hostId: activeStream.hostId,
           vcName: activeStream.vcName,
           startedAt: activeStream.startedAt,
           joined: activeStream.clickedUserIds.size,
+          requiredTier: activeStream.requiredTier,
         });
         interaction.message.edit({ embeds: [updatedEmbed] }).catch(() => {});
 
-        const usedNow = unlimited ? null : _streamJoinCount(member.id);
-        const limitNow = unlimited ? null : _streamBaseLimit(member) + _streamBonus(member.id);
         return interaction.reply({
-          content: unlimited
-            ? `✅ You're in — head to <#${activeStream.vcId}>.`
-            : `✅ You're in — head to <#${activeStream.vcId}>. (${usedNow}/${limitNow} this week)`,
+          content: `✅ You're in — head to <#${activeStream.vcId}>.`,
           ephemeral: true,
         });
       }
@@ -5156,9 +5081,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const member = interaction.member;
         const isHost = member.id === activeStream.hostId;
         if (!isHost && !activeStream.clickedUserIds.has(member.id)) {
-          const unlimited = _streamIsUnlimited(member);
           activeStream.clickedUserIds.add(member.id);
-          if (!unlimited) _streamRecordJoin(member.id);
+          _streamRecordJoin(member.id);
         }
 
         const endedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
@@ -5409,7 +5333,14 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferUpdate();
 
-        const newVcId = customId.replace('stream_force_cancel_', '');
+        // customId is "stream_force_cancel_<VolI-style tier>_<vcId>" — vcId is
+        // always pure digits, so split on the last underscore rather than
+        // parsing the tier shape.
+        const rest = customId.replace('stream_force_cancel_', '');
+        const lastUnderscore = rest.lastIndexOf('_');
+        const tierKeyMap = { VolI: 'Vol I', VolII: 'Vol II', VolIII: 'Vol III', VolIV: 'Vol IV' };
+        const forceTier = tierKeyMap[rest.slice(0, lastUnderscore)] || 'Vol I';
+        const newVcId = rest.slice(lastUnderscore + 1);
 
         // Best-effort: mark the old announcement as cancelled if it still exists.
         if (activeStream) {
@@ -5435,7 +5366,7 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.editReply({ content: 'Old stream cancelled, but could not start the new one — channel not found. Run /host-stream again.', components: [] });
         }
 
-        const newEmbed = _streamEmbed({ hostId: interaction.user.id, vcName: newVc.name, startedAt: new Date(), joined: 0 });
+        const newEmbed = _streamEmbed({ hostId: interaction.user.id, vcName: newVc.name, startedAt: new Date(), joined: 0, requiredTier: forceTier });
 
         const newRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
@@ -5448,8 +5379,8 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.editReply({ content: 'Old stream cancelled, but could not post the new announcement. Run /host-stream again.', components: [] });
         }
 
-        activeStream = { vcId: newVc.id, vcName: newVc.name, messageId: newMsg.id, hostId: interaction.user.id, startedAt: new Date(), clickedUserIds: new Set(), vcTimes: new Map() };
-        return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}>, tracking joins for <#${newVc.id}>.`, components: [] });
+        activeStream = { vcId: newVc.id, vcName: newVc.name, messageId: newMsg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier: forceTier, clickedUserIds: new Set(), vcTimes: new Map() };
+        return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> (**${forceTier} and above**), tracking joins for <#${newVc.id}>.`, components: [] });
       }
     }
 
@@ -6278,20 +6209,6 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
       );
     } catch {}
     return;
-  }
-
-  if (!_streamIsUnlimited(member)) {
-    const limit = _streamBaseLimit(member) + _streamBonus(member.id);
-    const used = _streamJoinCount(member.id);
-    if (used > limit) {
-      await newState.disconnect('Weekly live-stream limit reached').catch(() => {});
-      try {
-        await member.send(
-          `You've hit your weekly limit (${limit}/${limit}). Resets Sunday 00:00 ET.`
-        );
-      } catch {}
-      return;
-    }
   }
 
   const rec = activeStream.vcTimes.get(member.id) || { joinedAt: null, totalMs: 0 };

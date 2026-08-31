@@ -209,30 +209,6 @@ const commands = [
         .setRequired(false)
     ),
 
-  new SlashCommandBuilder()
-    .setName('vol-override')
-    .setDescription('Grant a member (or everyone) extra streams this week on top of their volume tier base (staff only)')
-    .addIntegerOption(opt =>
-      opt.setName('extra_sessions')
-        .setDescription('How many extra streams to add on top of their tier base (Vol I: 2, Vol II: 3, Vol III/IV: 5)')
-        .setRequired(true)
-        .setMinValue(0)
-        .setMaxValue(3)
-    )
-    .addUserOption(opt =>
-      opt.setName('member')
-        .setDescription('The member to grant extra streams to — omit to grant everyone with a Volume role')
-        .setRequired(false)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('reset-stream-quota')
-    .setDescription('Reset weekly stream quota — for one member or everyone (staff only)')
-    .addUserOption(opt =>
-      opt.setName('member')
-        .setDescription('Member to reset (omit to reset everyone)')
-        .setRequired(false)
-    ),
 
   new SlashCommandBuilder()
     .setName('stream-history')
@@ -256,6 +232,17 @@ const commands = [
         .setDescription('The voice channel the stream will be in')
         .addChannelTypes(2) // GuildVoice
         .setRequired(true)
+    )
+    .addStringOption(opt =>
+      opt.setName('tier')
+        .setDescription('Minimum Volume tier that can join — that tier and above only')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Volume I (and above)', value: 'Vol I' },
+          { name: 'Volume II (and above)', value: 'Vol II' },
+          { name: 'Volume III (and above)', value: 'Vol III' },
+          { name: 'Volume IV', value: 'Vol IV' },
+        )
     ),
 
   new SlashCommandBuilder()
@@ -265,6 +252,26 @@ const commands = [
       opt.setName('channel')
         .setDescription('The voice channel the stream is currently live in')
         .addChannelTypes(2) // GuildVoice
+        .setRequired(true)
+    )
+    .addStringOption(opt =>
+      opt.setName('tier')
+        .setDescription('Minimum Volume tier that can join — that tier and above only (defaults to Vol I)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Volume I (and above)', value: 'Vol I' },
+          { name: 'Volume II (and above)', value: 'Vol II' },
+          { name: 'Volume III (and above)', value: 'Vol III' },
+          { name: 'Volume IV', value: 'Vol IV' },
+        )
+    ),
+
+  new SlashCommandBuilder()
+    .setName('stream-set-host')
+    .setDescription('Fix who is credited as host on the active stream (staff only)')
+    .addUserOption(opt =>
+      opt.setName('member')
+        .setDescription('Who should be credited as the host')
         .setRequired(true)
     ),
 
