@@ -1664,16 +1664,29 @@ function _fmtMins(ms) {
   return `${Math.round(ms / 60000)}m`;
 }
 
+// Expands a minimum tier ("Vol II") into the explicit list of tiers allowed
+// to join ("Vol II, III, IV") rather than a vague "and above" — spelled out
+// so nobody has to do the tier math themselves.
+function _streamAllowedTiersText(requiredTier) {
+  const order = ['Vol I', 'Vol II', 'Vol III', 'Vol IV'];
+  const minRank = STREAM_TIER_RANK[requiredTier] || 1;
+  const allowed = order.filter(t => STREAM_TIER_RANK[t] >= minRank);
+  if (allowed.length === order.length) return 'Vol I, II, III, IV are all allowed to join';
+  const numerals = allowed.map(t => t.replace('Vol ', ''));
+  return `Vol ${numerals.join(', ')} ${allowed.length === 1 ? 'is' : 'are'} allowed to join`;
+}
+
 function _streamEmbed({ hostId, vcName, startedAt, joined, requiredTier }) {
   return new EmbedBuilder()
     .setColor(0x38bdf8)
     .setTitle('🔴 Live Stream Starting')
     .setDescription(
       `<@${hostId}> is live in **${vcName}**.\n\n` +
+      `${_streamAllowedTiersText(requiredTier)}.\n\n` +
       `Click **Join VC** to lock in this stream — no undo once clicked.`
     )
     .addFields(
-      { name: 'Access', value: `${requiredTier} and above`, inline: false },
+      { name: 'Access', value: _streamAllowedTiersText(requiredTier), inline: false },
       { name: 'Joined', value: `${joined}`, inline: true },
       { name: 'Started', value: _fmtEt(startedAt), inline: true },
     );
@@ -1758,7 +1771,7 @@ async function _streamHistoryEmbed(guild, entry) {
     .setTitle(`🔊 ${entry.vcName}`)
     .setDescription(
       `Host: <@${entry.hostId}>\n` +
-      `${entry.requiredTier ? `Access: ${entry.requiredTier} and above\n` : ''}` +
+      `${entry.requiredTier ? `Access: ${_streamAllowedTiersText(entry.requiredTier)}\n` : ''}` +
       `${_fmtEt(new Date(entry.startedAt))} → ${_fmtEt(new Date(entry.endedAt))}\n\n` +
       `**Attendance:**\n${lines}`
     );
@@ -3839,7 +3852,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!msg) return interaction.editReply({ content: 'Could not post the stream announcement.' });
 
         activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, clickedUserIds: new Set(), vcTimes: new Map() };
-        return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> (**${requiredTier} and above**), tracking joins for <#${vc.id}>.` });
+        return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(requiredTier)}, tracking joins for <#${vc.id}>.` });
       }
 
       // ── /stream-restart-vc ──
@@ -3891,7 +3904,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const vcTimes = new Map(membersToKick.map(m => [m.id, { joinedAt: null, totalMs: 10 * 60 * 1000 }]));
 
         activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, clickedUserIds: new Set(), vcTimes };
-        return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> (**${requiredTier} and above**) — tracking is live again.` });
+        return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(requiredTier)} — tracking is live again.` });
       }
 
       // ── /stream-set-host ──
@@ -5021,7 +5034,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (!_streamCanJoinTier(member, activeStream.requiredTier)) {
           return interaction.reply({
-            content: `This stream is **${activeStream.requiredTier} and above** — you don't hold a high enough Volume tier to join.`,
+            content: `This stream: ${_streamAllowedTiersText(activeStream.requiredTier)} — you don't hold a high enough Volume tier to join.`,
             ephemeral: true,
           });
         }
@@ -5380,7 +5393,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         activeStream = { vcId: newVc.id, vcName: newVc.name, messageId: newMsg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier: forceTier, clickedUserIds: new Set(), vcTimes: new Map() };
-        return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> (**${forceTier} and above**), tracking joins for <#${newVc.id}>.`, components: [] });
+        return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(forceTier)}, tracking joins for <#${newVc.id}>.`, components: [] });
       }
     }
 
