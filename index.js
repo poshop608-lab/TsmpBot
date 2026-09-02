@@ -5308,6 +5308,50 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
 
+      // ── Recording upload-access request: Approve/Decline. Posted by the
+      // Worker into a ticket in the TICKETS category — same routing quirk as
+      // every other Approve/Decline here, Discord sends real button clicks to
+      // the bot's gateway, not the Worker's HTTP /interactions. Any staff
+      // member can resolve it (unlike model requests, there's no single
+      // "creator" to restrict this to). ──
+      if (customId.startsWith('upload_approve|') || customId.startsWith('upload_decline|')) {
+        const [action, requesterId] = customId.split('|');
+        const approve = action === 'upload_approve';
+
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'Only staff can resolve this.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+          if (approve) {
+            const r = await fetch('https://smp-join.poshop608.workers.dev/bot/recordings/grant-upload-access', {
+              method: 'POST',
+              headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ discordId: requesterId }),
+            });
+            const d = await r.json();
+            if (!d.ok) return interaction.editReply({ content: 'Could not grant access — try again.' });
+          }
+
+          const requesterMember = await interaction.guild.members.fetch(requesterId).catch(() => null);
+          if (requesterMember) {
+            await requesterMember.send(
+              approve
+                ? `✅ You've been approved to upload recordings — head to the Recordings tab on the site, it'll show the upload form now.`
+                : `❌ Your recording upload access request was declined.`
+            ).catch(() => {});
+          }
+
+          await interaction.editReply({ content: 'Done — closing this ticket.' });
+          setTimeout(() => interaction.channel.delete().catch(() => {}), 2000);
+          return;
+        } catch (e) {
+          console.error('[upload approve/decline] failed:', e.message);
+          return interaction.editReply({ content: 'Something went wrong — try again.' });
+        }
+      }
+
       // ── Signal outcome buttons — only the person who dropped the signal
       // can resolve it. signalId is formatted "sig_<timestamp>_<userId>", so
       // the poster's ID is recovered directly from it rather than needing a
