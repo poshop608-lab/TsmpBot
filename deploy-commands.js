@@ -235,13 +235,14 @@ const commands = [
     )
     .addStringOption(opt =>
       opt.setName('tier')
-        .setDescription('Minimum Volume tier that can join — that tier and above only')
+        .setDescription('Minimum Volume tier that can join, or 1-on-1 exclusive')
         .setRequired(true)
         .addChoices(
           { name: 'All Volumes (Vol I, II, III, IV can all join)', value: 'Vol I' },
           { name: 'Volume II and above (Vol II, III, IV can join)', value: 'Vol II' },
           { name: 'Volume III and above (Vol III, IV can join)', value: 'Vol III' },
           { name: 'Volume IV only', value: 'Vol IV' },
+          { name: '1-on-1 Only (exclusive — no Volume tier can join)', value: '1-on-1' },
         )
     ),
 
@@ -256,13 +257,14 @@ const commands = [
     )
     .addStringOption(opt =>
       opt.setName('tier')
-        .setDescription('Minimum Volume tier that can join — that tier and above only (defaults to all volumes)')
+        .setDescription('Minimum Volume tier that can join, or 1-on-1 exclusive (defaults to all volumes)')
         .setRequired(false)
         .addChoices(
           { name: 'All Volumes (Vol I, II, III, IV can all join)', value: 'Vol I' },
           { name: 'Volume II and above (Vol II, III, IV can join)', value: 'Vol II' },
           { name: 'Volume III and above (Vol III, IV can join)', value: 'Vol III' },
           { name: 'Volume IV only', value: 'Vol IV' },
+          { name: '1-on-1 Only (exclusive — no Volume tier can join)', value: '1-on-1' },
         )
     ),
 

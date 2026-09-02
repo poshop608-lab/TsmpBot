@@ -1646,9 +1646,10 @@ let VC_SCHED_CH_ID     = null;  // #📅〢vc-schedule channel
 // report, not a limit.
 const ONE_ON_ONE_ROLE_ID = '1539004461299539978';
 // Tier rank, low to high — used to compare a member's highest Volume role
-// against a stream's required tier. Staff, 1-on-1, and Assistant Coach can
-// join any tier (treated as max rank).
-const STREAM_TIER_RANK = { 'Vol I': 1, 'Vol II': 2, 'Vol III': 3, 'Vol IV': 4 };
+// against a stream's required tier. '1-on-1' is its own exclusive tier above
+// Vol IV, handled separately in _streamCanJoinTier (not a straight rank
+// comparison — see there for who actually gets in).
+const STREAM_TIER_RANK = { 'Vol I': 1, 'Vol II': 2, 'Vol III': 3, 'Vol IV': 4, '1-on-1': 5 };
 const streamWeeklyJoins = new Map(); // userId -> { weekKey: string, count: number } — informational only
 let activeStream = null; // { vcId, vcName, messageId, hostId, startedAt, requiredTier, clickedUserIds: Set<string>, vcTimes: Map<userId, { joinedAt, totalMs }> } — null when no stream is live
 const streamHistory = []; // completed (ended, not cancelled) streams: { vcName, hostId, startedAt, endedAt, requiredTier, attendance: [{ userId, ms }] }
@@ -1668,12 +1669,15 @@ function _fmtMins(ms) {
 // to join ("Vol II, III, IV") rather than a vague "and above" — spelled out
 // so nobody has to do the tier math themselves.
 function _streamAllowedTiersText(requiredTier) {
+  if (requiredTier === '1-on-1') return '1-on-1 members only';
+
   const order = ['Vol I', 'Vol II', 'Vol III', 'Vol IV'];
   const minRank = STREAM_TIER_RANK[requiredTier] || 1;
   const allowed = order.filter(t => STREAM_TIER_RANK[t] >= minRank);
-  if (allowed.length === order.length) return 'Vol I, II, III, IV are all allowed to join';
-  const numerals = allowed.map(t => t.replace('Vol ', ''));
-  return `Vol ${numerals.join(', ')} ${allowed.length === 1 ? 'is' : 'are'} allowed to join`;
+  const tail = allowed.length === order.length
+    ? 'Vol I, II, III, IV are all allowed to join (1-on-1 members too)'
+    : `Vol ${allowed.map(t => t.replace('Vol ', '')).join(', ')} ${allowed.length === 1 ? 'is' : 'are'} allowed to join (1-on-1 members too)`;
+  return tail;
 }
 
 function _streamEmbed({ hostId, vcName, startedAt, joined, requiredTier }) {
@@ -1777,13 +1781,14 @@ async function _streamHistoryEmbed(guild, entry) {
     );
 }
 
-// Staff, 1-on-1, and Assistant Coach can join any tier — treated as max rank
-// (higher than Vol IV) regardless of which Volume role (if any) they hold.
+// Staff and Assistant Coach can join any Volume-tier stream — treated as max
+// Volume rank regardless of which Volume role (if any) they hold. 1-on-1 is
+// NOT folded in here — it's its own exclusive tier, handled in
+// _streamCanJoinTier, not a blanket "unlimited" pass.
 function _streamMemberTierRank(member) {
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
-  const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
   const isAssistantCoach = member.roles.cache.has(ASSISTANT_COACH_ROLE_ID);
-  if (isStaff || isOneOnOne || isAssistantCoach) return Infinity;
+  if (isStaff || isAssistantCoach) return STREAM_TIER_RANK['Vol IV'];
 
   const order = ['Vol IV', 'Vol III', 'Vol II', 'Vol I'];
   for (const tier of order) {
@@ -1792,10 +1797,23 @@ function _streamMemberTierRank(member) {
   return 0; // no Volume role at all — below every tier
 }
 
-// Can this member join a stream that requires `requiredTier` (e.g. 'Vol III')?
-// Higher tiers can attend lower-tier streams; lower tiers cannot attend
-// higher-tier streams — a straight rank comparison.
+// Can this member join a stream that requires `requiredTier`?
+// - '1-on-1' is an exclusive tier: only 1-on-1 role holders and staff get in
+//   (Assistant Coach alone does NOT, since it isn't staff) — every Volume
+//   tier is locked out regardless of rank.
+// - Every other tier ('Vol I'..'Vol IV'): every Volume member automatically
+//   includes 1-on-1 holders (rank comparison covers them via their own
+//   Volume role, if any) — plus a 1-on-1 holder with no Volume role at all
+//   still gets into every regular tier, same as staff.
+// - Higher Volume tiers can attend lower-tier streams; lower tiers cannot
+//   attend higher-tier streams — a straight rank comparison otherwise.
 function _streamCanJoinTier(member, requiredTier) {
+  const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
+  const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
+
+  if (requiredTier === '1-on-1') return isOneOnOne || isStaff;
+
+  if (isOneOnOne) return true; // 1-on-1 can join every regular Volume tier
   return _streamMemberTierRank(member) >= (STREAM_TIER_RANK[requiredTier] || 0);
 }
 
@@ -5351,7 +5369,7 @@ client.on(Events.InteractionCreate, async interaction => {
         // parsing the tier shape.
         const rest = customId.replace('stream_force_cancel_', '');
         const lastUnderscore = rest.lastIndexOf('_');
-        const tierKeyMap = { VolI: 'Vol I', VolII: 'Vol II', VolIII: 'Vol III', VolIV: 'Vol IV' };
+        const tierKeyMap = { VolI: 'Vol I', VolII: 'Vol II', VolIII: 'Vol III', VolIV: 'Vol IV', '1-on-1': '1-on-1' };
         const forceTier = tierKeyMap[rest.slice(0, lastUnderscore)] || 'Vol I';
         const newVcId = rest.slice(lastUnderscore + 1);
 
