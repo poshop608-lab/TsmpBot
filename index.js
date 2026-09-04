@@ -5324,11 +5324,16 @@ client.on(Events.InteractionCreate, async interaction => {
 
         try {
           if (approve) {
-            await fetch('https://smp-join.poshop608.workers.dev/bot/stoup/grant', {
+            const grantRes = await fetch('https://smp-join.poshop608.workers.dev/bot/stoup/grant', {
               method: 'POST',
               headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ discordId: requesterId }),
             });
+            if (!grantRes.ok) {
+              const detail = await grantRes.text().catch(() => '');
+              console.error(`[stoup approve] grant call failed: ${grantRes.status} ${detail}`);
+              return interaction.editReply({ content: `Grant call failed (${grantRes.status}) — access was NOT saved. Try again or check worker logs.` });
+            }
           }
 
           const requesterMember = await interaction.guild.members.fetch(requesterId).catch(() => null);
