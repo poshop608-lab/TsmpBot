@@ -5308,6 +5308,47 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
 
+      // ── STOUP access request: Approve/Decline. Posted by the Worker into
+      // a ticket in the TICKETS category — same routing quirk as every other
+      // Approve/Decline here. Founder-role-only (not general staff) since
+      // STOUP is explicitly a founder-approves-personally resource. ──
+      const FOUNDER_ROLE_ID = '1469222592312377374';
+      if (customId.startsWith('stoup_approve|') || customId.startsWith('stoup_decline|')) {
+        const [action, requesterId] = customId.split('|');
+        const approve = action === 'stoup_approve';
+
+        const isFounder = interaction.member.roles.cache.has(FOUNDER_ROLE_ID);
+        if (!isFounder) return interaction.reply({ content: 'Only the Founder can resolve this.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+          if (approve) {
+            await fetch('https://smp-join.poshop608.workers.dev/bot/stoup/grant', {
+              method: 'POST',
+              headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ discordId: requesterId }),
+            });
+          }
+
+          const requesterMember = await interaction.guild.members.fetch(requesterId).catch(() => null);
+          if (requesterMember) {
+            await requesterMember.send(
+              approve
+                ? `✅ You've been approved for **STOUP** — check the STOUP tab on the site.`
+                : `❌ Your STOUP request was declined.`
+            ).catch(() => {});
+          }
+
+          await interaction.editReply({ content: 'Done — closing this ticket.' });
+          setTimeout(() => interaction.channel.delete().catch(() => {}), 2000);
+          return;
+        } catch (e) {
+          console.error('[stoup approve/decline] failed:', e.message);
+          return interaction.editReply({ content: 'Something went wrong — try again.' });
+        }
+      }
+
       // ── Recording upload-access request: Approve/Decline. Posted by the
       // Worker into a ticket in the TICKETS category — same routing quirk as
       // every other Approve/Decline here, Discord sends real button clicks to
