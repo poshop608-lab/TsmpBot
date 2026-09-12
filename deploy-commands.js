@@ -385,6 +385,15 @@ const commands = [
     .setName('stop')
     .setDescription('Stop the current recording and upload it'),
 
+  new SlashCommandBuilder()
+    .setName('giveaccesstostats')
+    .setDescription('Grant a Vol II+ student access to the Stats tab (Founder only)')
+    .addUserOption(opt =>
+      opt.setName('user')
+        .setDescription('The member to grant Stats access to')
+        .setRequired(true)
+    ),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);

@@ -4387,6 +4387,41 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `Welcome card posted for <@${targetUser.id}>.` });
       }
 
+      if (commandName === 'giveaccesstostats') {
+        const isFounder = interaction.member.roles.cache.has('1469222592312377374'); // Founder role
+        if (!isFounder) return interaction.reply({ content: 'Only the Founder can grant Stats access.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetUser = interaction.options.getUser('user');
+        const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
+        if (!targetMember) return interaction.editReply({ content: 'Member not found in server.' });
+
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/stats/grant', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ discordId: targetUser.id }),
+          });
+          const d = await r.json();
+          if (!d.ok) {
+            const reason = d.reason === 'below_min_tier'
+              ? 'that member needs Vol II or above before Stats can be granted.'
+              : `grant failed (${d.reason || r.status}).`;
+            return interaction.editReply({ content: `Could not grant access — ${reason}` });
+          }
+
+          await targetMember.send(
+            `✅ You've been granted access to **Stats** — check the Stats tab on the site.`
+          ).catch(() => {});
+
+          return interaction.editReply({ content: `Stats access granted to <@${targetUser.id}>.` });
+        } catch (e) {
+          console.error('[giveaccesstostats] failed:', e.message);
+          return interaction.editReply({ content: 'Something went wrong — try again.' });
+        }
+      }
+
       if (commandName === 'news-protocols') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
