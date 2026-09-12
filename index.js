@@ -4996,8 +4996,9 @@ client.on(Events.InteractionCreate, async interaction => {
           po3: 'https://drive.google.com/drive/folders/1d5sGeSKNkGMfTWpI0eQMzEZ-R9epS8hL?usp=drive_link',
           model22: 'https://1drv.ms/f/c/347c2f5edb3cd159/IgAgsivVreIsQYmvNWCmIFfKAazhNEpTC0suSGFWRMRAVxg?e=503cOV',
           qtmodel: 'https://drive.google.com/drive/folders/1zyNgFx6CYKlT4JLireZ9NgFcyu38q1Z_?usp=drive_link',
+          artic: 'https://drive.google.com/drive/folders/138d87Aey0Xw9F1pTWrVfoGa3TwVr0pin?usp=sharing',
         };
-        const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined', qtmodel: 'Quarterly Theory Model' };
+        const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined', qtmodel: 'Quarterly Theory Model', artic: 'Artic' };
         const seriesLabel = VIDEO_SERIES_LABELS[seriesKey] || seriesKey;
         const link = VIDEO_DRIVE_LINKS[seriesKey];
 
