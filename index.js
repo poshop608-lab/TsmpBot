@@ -1577,6 +1577,22 @@ const signalDrafts = new Map(); // userId -> { asset, direction, stop, tp }
 // week, this month, last month, and all-time-to-date. Week starts Monday
 // (matches how the rest of the bot reasons about trading weeks elsewhere,
 // e.g. _envOverrides/DOW_LABELS), month is plain calendar month.
+// Current streak as of the most recent trade — walks back from the newest
+// entry counting consecutive same-outcome trades. Breakevens break a streak
+// (neither extend a win streak nor a loss streak) rather than being ignored,
+// since a BE genuinely interrupts a run either way.
+function _currentStreak(sortedNewestFirst) {
+  if (sortedNewestFirst.length === 0) return { type: null, count: 0 };
+  const first = sortedNewestFirst[0].outcome;
+  if (first !== 'W' && first !== 'L') return { type: first, count: 1 };
+  let count = 0;
+  for (const t of sortedNewestFirst) {
+    if (t.outcome === first) count++;
+    else break;
+  }
+  return { type: first, count };
+}
+
 function _buildJournalStatsEmbed(user, trades) {
   const now = new Date();
 
@@ -1616,6 +1632,21 @@ function _buildJournalStatsEmbed(user, trades) {
   const thisMonth = trades.filter(t => new Date(t.createdAt) >= thisMonthStart);
   const lastMonth = trades.filter(t => { const d = new Date(t.createdAt); return d >= lastMonthStart && d < thisMonthStart; });
 
+  // trades arrives newest-first (worker unshifts on add), so this is already
+  // in the right order for streak walking.
+  const streak = _currentStreak(trades);
+  const streakText = streak.count === 0 || streak.type === 'BE'
+    ? 'None right now'
+    : streak.type === 'W' ? `🔥 ${streak.count} win${streak.count === 1 ? '' : 's'} in a row` : `🧊 ${streak.count} loss${streak.count === 1 ? '' : 'es'} in a row`;
+
+  const gradeBreakdown = ['A', 'B', 'C'].map(g => {
+    const gTrades = trades.filter(t => t.grade === g);
+    const w = gTrades.filter(t => t.outcome === 'W').length;
+    const l = gTrades.filter(t => t.outcome === 'L').length;
+    const be = gTrades.filter(t => t.outcome === 'BE').length;
+    return `**${g} Grade** — ${gTrades.length} trade${gTrades.length === 1 ? '' : 's'} · ${w}W / ${l}L / ${be}BE`;
+  }).join('\n');
+
   return new EmbedBuilder()
     .setColor(0x38bdf8)
     .setTitle(`📊 ${user.username}'s Trade Stats`)
@@ -1625,6 +1656,8 @@ function _buildJournalStatsEmbed(user, trades) {
       { name: 'This Month', value: fmt(statsFor(thisMonth)) },
       { name: 'Last Month', value: fmt(statsFor(lastMonth)) },
       { name: 'All-Time (to today)', value: fmt(statsFor(trades)) },
+      { name: 'Current Streak', value: streakText },
+      { name: 'By Grade', value: gradeBreakdown },
     )
     .setFooter({ text: 'The Smart Money Paradigm · Trade Journal' })
     .setTimestamp();
@@ -1642,7 +1675,7 @@ function _buildJournalFounderEmbeds(trades) {
   }
 
   const rows = [...byUser.entries()].map(([discordId, data]) => {
-    const list = data.trades;
+    const list = data.trades; // newest-first, same order as stored
     const n = list.length;
     const wins = list.filter(t => t.outcome === 'W').length;
     const losses = list.filter(t => t.outcome === 'L').length;
@@ -1651,19 +1684,26 @@ function _buildJournalFounderEmbeds(trades) {
     const winRate = decided > 0 ? (wins / decided) * 100 : null;
     const totalRR = list.reduce((sum, t) => sum + (Number.isFinite(t.rr) ? t.rr : 0), 0);
     const avgRR = n > 0 ? totalRR / n : 0;
-    return { discordId, username: data.username, n, wins, losses, be, winRate, avgRR, totalRR };
+    const streak = _currentStreak(list);
+    const gradeCounts = { A: list.filter(t => t.grade === 'A').length, B: list.filter(t => t.grade === 'B').length, C: list.filter(t => t.grade === 'C').length };
+    return { discordId, username: data.username, n, wins, losses, be, winRate, avgRR, totalRR, streak, gradeCounts };
   }).sort((a, b) => b.n - a.n);
 
-  return rows.map(r => new EmbedBuilder()
-    .setColor(0x38bdf8)
-    .setTitle(`${r.username}`)
-    .setDescription(
-      `<@${r.discordId}>\n\n` +
-      `**${r.n}** trade${r.n === 1 ? '' : 's'} logged · ${r.wins}W / ${r.losses}L / ${r.be}BE\n` +
-      `Win rate: ${r.winRate === null ? 'N/A' : r.winRate.toFixed(1) + '%'}\n` +
-      `Avg RR: ${r.avgRR >= 0 ? '+' : ''}${r.avgRR.toFixed(2)}R · Total: ${r.totalRR >= 0 ? '+' : ''}${r.totalRR.toFixed(2)}R`
-    )
-  );
+  return rows.map(r => {
+    const streakText = r.streak.count === 0 || r.streak.type === 'BE'
+      ? 'None'
+      : r.streak.type === 'W' ? `🔥 ${r.streak.count}W streak` : `🧊 ${r.streak.count}L streak`;
+    return new EmbedBuilder()
+      .setColor(0x38bdf8)
+      .setTitle(`${r.username}`)
+      .setDescription(
+        `<@${r.discordId}>\n\n` +
+        `**${r.n}** trade${r.n === 1 ? '' : 's'} logged · ${r.wins}W / ${r.losses}L / ${r.be}BE\n` +
+        `Win rate: ${r.winRate === null ? 'N/A' : r.winRate.toFixed(1) + '%'} · Streak: ${streakText}\n` +
+        `Avg RR: ${r.avgRR >= 0 ? '+' : ''}${r.avgRR.toFixed(2)}R · Total: ${r.totalRR >= 0 ? '+' : ''}${r.totalRR.toFixed(2)}R\n` +
+        `Grades: A ${r.gradeCounts.A} · B ${r.gradeCounts.B} · C ${r.gradeCounts.C}`
+      );
+  });
 }
 
 // Posts a finished signal to SIGNALS_CH_ID with W/L/Criteria buttons, saves it
@@ -5432,8 +5472,30 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!pending) {
           return interaction.update({ content: 'That trade log expired — click Log Trade again.', components: [] });
         }
+        pending.outcome = outcome;
+        _journalPendingSet(interaction.user.id, pending);
 
-        if (outcome === 'BE') {
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('journal_grade|A').setLabel('A Grade').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId('journal_grade|B').setLabel('B Grade').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('journal_grade|C').setLabel('C Grade').setStyle(ButtonStyle.Secondary),
+        );
+        return interaction.update({ content: `**${pending.title}** — what grade was this setup?`, components: [row] });
+      }
+
+      // ── Trade Journal: grade buttons (A / B / C), shown after outcome.
+      // Breakeven saves right here since it has no RR to collect; Win/Loss
+      // go on to the RR modal next. ──
+      if (customId.startsWith('journal_grade|')) {
+        const grade = customId.split('|')[1]; // A | B | C
+        const pending = _journalPendingGet(interaction.user.id);
+        if (!pending || !pending.outcome) {
+          return interaction.update({ content: 'That trade log expired — click Log Trade again.', components: [] });
+        }
+        pending.grade = grade;
+        _journalPendingSet(interaction.user.id, pending);
+
+        if (pending.outcome === 'BE') {
           await interaction.update({ content: 'Saving...', components: [] });
           try {
             const r = await fetch('https://smp-join.poshop608.workers.dev/bot/journal/add', {
@@ -5446,21 +5508,22 @@ client.on(Events.InteractionCreate, async interaction => {
                 title: pending.title,
                 notes: pending.notes,
                 outcome: 'BE',
+                grade,
               }),
             });
             const d = await r.json();
             _journalPending.delete(interaction.user.id);
             if (!d.ok) return interaction.editReply({ content: 'Could not save the trade — try again.' });
-            return interaction.editReply({ content: `✅ Logged **${pending.title}** — Breakeven.` });
+            return interaction.editReply({ content: `✅ Logged **${pending.title}** — Breakeven, ${grade} Grade.` });
           } catch (e) {
-            console.error('[journal outcome BE] failed:', e.message);
+            console.error('[journal grade BE] failed:', e.message);
             return interaction.editReply({ content: 'Something went wrong saving the trade.' });
           }
         }
 
         const modal = new ModalBuilder()
-          .setCustomId(`journal_rr_modal|${outcome}`)
-          .setTitle(outcome === 'W' ? 'Trade Won — RR' : 'Trade Lost — RR');
+          .setCustomId(`journal_rr_modal|${pending.outcome}`)
+          .setTitle(pending.outcome === 'W' ? 'Trade Won — RR' : 'Trade Lost — RR');
         modal.addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder().setCustomId('jt_rr').setLabel('RR (just the number, e.g. 3)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 3 or 2.5')
@@ -6014,6 +6077,7 @@ client.on(Events.InteractionCreate, async interaction => {
             notes: pending.notes,
             outcome,
             rr,
+            grade: pending.grade,
           }),
         });
         const d = await r.json();
@@ -6021,7 +6085,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!d.ok) return interaction.editReply({ content: 'Could not save the trade — try again.' });
 
         const label = outcome === 'W' ? `✅ Win, +${rrAbs}R` : `❌ Loss, -${rrAbs}R`;
-        return interaction.editReply({ content: `Logged **${pending.title}** — ${label}.` });
+        return interaction.editReply({ content: `Logged **${pending.title}** — ${label}, ${pending.grade} Grade.` });
       } catch (e) {
         console.error('[journal rr modal] failed:', e.message);
         return interaction.editReply({ content: 'Something went wrong saving the trade.' });
