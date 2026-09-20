@@ -1557,6 +1557,7 @@ const STAFF_ROLE_IDS = [
 const ASSISTANT_COACH_ROLE_ID = '1508394582952509490';
 const SIGNALS_CH_ID = '1534128320612925500'; // /dropsignal always posts here, regardless of which channel the command was run in
 const JOURNAL_CH_ID = '1551272475990560959'; // Log Trade / My Stats buttons live here, all Vol holders
+const TRADE_LOG_AUDIT_CH_ID = '1551283099126464712'; // admin-only live feed of every logged trade
 
 // /dropsignal eligibility: any Volume tier, staff, or Assistant Coach.
 function _canDropSignal(member) {
@@ -1581,6 +1582,29 @@ const signalDrafts = new Map(); // userId -> { asset, direction, stop, tp }
 // entry counting consecutive same-outcome trades. Breakevens break a streak
 // (neither extend a win streak nor a loss streak) rather than being ignored,
 // since a BE genuinely interrupts a run either way.
+// Posts a live line to the admin-only trade-log channel every time a trade
+// gets saved — who, when, title, outcome, RR, grade. Best-effort, never
+// throws, so an audit-log hiccup can't break the actual save the user is
+// waiting on.
+async function _postTradeLogAudit(guild, { discordId, username, title, outcome, rr, grade }) {
+  try {
+    const ch = guild.channels.cache.get(TRADE_LOG_AUDIT_CH_ID);
+    if (!ch) return;
+    const outcomeText = outcome === 'W' ? `✅ Win (+${rr}R)` : outcome === 'L' ? `❌ Loss (${rr}R)` : '⚪ Breakeven';
+    const embed = new EmbedBuilder()
+      .setColor(outcome === 'W' ? 0x4ade80 : outcome === 'L' ? 0xf87171 : 0x9ca3af)
+      .setDescription(
+        `<@${discordId}> (${username}) logged a trade\n\n` +
+        `**${title}**\n` +
+        `${outcomeText} · ${grade} Grade`
+      )
+      .setTimestamp();
+    await ch.send({ embeds: [embed] });
+  } catch (e) {
+    console.error('[trade log audit] failed:', e.message);
+  }
+}
+
 function _currentStreak(sortedNewestFirst) {
   if (sortedNewestFirst.length === 0) return { type: null, count: 0 };
   const first = sortedNewestFirst[0].outcome;
@@ -5547,6 +5571,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const d = await r.json();
             _journalPending.delete(interaction.user.id);
             if (!d.ok) return interaction.editReply({ content: 'Could not save the trade — try again.' });
+            _postTradeLogAudit(interaction.guild, { discordId: interaction.user.id, username: interaction.user.username, title: pending.title, outcome: 'BE', rr: 0, grade });
             return interaction.editReply({ content: `✅ Logged **${pending.title}** — Breakeven, ${grade} Grade.` });
           } catch (e) {
             console.error('[journal grade BE] failed:', e.message);
@@ -6117,6 +6142,7 @@ client.on(Events.InteractionCreate, async interaction => {
         _journalPending.delete(interaction.user.id);
         if (!d.ok) return interaction.editReply({ content: 'Could not save the trade — try again.' });
 
+        _postTradeLogAudit(interaction.guild, { discordId: interaction.user.id, username: interaction.user.username, title: pending.title, outcome, rr, grade: pending.grade });
         const label = outcome === 'W' ? `✅ Win, +${rrAbs}R` : `❌ Loss, -${rrAbs}R`;
         return interaction.editReply({ content: `Logged **${pending.title}** — ${label}, ${pending.grade} Grade.` });
       } catch (e) {
