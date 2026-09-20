@@ -4624,6 +4624,39 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
 
+      if (commandName === 'sync-mentee-roles') {
+        const isFounder = interaction.member.roles.cache.has('1469222592312377374'); // Founder role
+        if (!isFounder) return interaction.reply({ content: 'Only the Founder can run this.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const MENTEE_ROLE_ID = '1469222481247211685';
+        const volRoleIds = Object.values(VOLUME_ROLES).map(v => v.id);
+
+        const allMembers = await guild.members.fetch();
+        const needsMentee = allMembers.filter(m =>
+          !m.user.bot &&
+          !m.roles.cache.has(MENTEE_ROLE_ID) &&
+          volRoleIds.some(id => m.roles.cache.has(id))
+        );
+
+        let granted = 0, failed = 0;
+        for (const m of needsMentee.values()) {
+          try {
+            await m.roles.add(MENTEE_ROLE_ID);
+            granted++;
+          } catch (e) {
+            failed++;
+            console.error(`[sync-mentee-roles] failed for ${m.id}:`, e.message);
+          }
+          await new Promise(r => setTimeout(r, 300)); // stay well under rate limits across a full member sweep
+        }
+
+        return interaction.editReply({
+          content: `Done — checked ${allMembers.filter(m => !m.user.bot).size} members. Granted Mentee to ${granted} Vol holder${granted === 1 ? '' : 's'} who were missing it${failed > 0 ? `, ${failed} failed (check logs)` : ''}.`,
+        });
+      }
+
       if (commandName === 'news-protocols') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });

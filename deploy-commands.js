@@ -407,6 +407,10 @@ const commands = [
         .setRequired(true)
     ),
 
+  new SlashCommandBuilder()
+    .setName('sync-mentee-roles')
+    .setDescription('Grant Mentee to every Vol I-IV holder missing it (Founder only)'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
