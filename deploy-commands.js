@@ -398,6 +398,15 @@ const commands = [
     .setName('setup-journal')
     .setDescription('Post the Log Trade / My Stats buttons in the journal channel (staff only)'),
 
+  new SlashCommandBuilder()
+    .setName('reset-journal-stats')
+    .setDescription('Permanently delete a user\'s trade journal history (Founder only)')
+    .addUserOption(opt =>
+      opt.setName('user')
+        .setDescription('The member whose trade log gets reset')
+        .setRequired(true)
+    ),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);

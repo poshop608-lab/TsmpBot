@@ -4561,6 +4561,29 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: 'Done.' });
       }
 
+      if (commandName === 'reset-journal-stats') {
+        const isFounder = interaction.member.roles.cache.has('1469222592312377374'); // Founder role
+        if (!isFounder) return interaction.reply({ content: 'Only the Founder can reset a trade journal.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+        const targetUser = interaction.options.getUser('user');
+
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/journal/reset', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ discordId: targetUser.id }),
+          });
+          const d = await r.json();
+          if (!d.ok) return interaction.editReply({ content: `Reset failed (${d.reason || r.status}).` });
+
+          return interaction.editReply({ content: `Reset <@${targetUser.id}>'s trade journal — removed ${d.removedCount} logged trade${d.removedCount === 1 ? '' : 's'}. This cannot be undone.` });
+        } catch (e) {
+          console.error('[reset-journal-stats] failed:', e.message);
+          return interaction.editReply({ content: 'Something went wrong — try again.' });
+        }
+      }
+
       if (commandName === 'news-protocols') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
