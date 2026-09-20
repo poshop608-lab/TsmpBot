@@ -394,6 +394,10 @@ const commands = [
         .setRequired(true)
     ),
 
+  new SlashCommandBuilder()
+    .setName('setup-journal')
+    .setDescription('Post the Log Trade / My Stats buttons in the journal channel (staff only)'),
+
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);

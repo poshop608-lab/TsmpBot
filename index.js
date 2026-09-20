@@ -1028,6 +1028,21 @@ const TYPE_ICON    = { 'NORMAL': '◈', 'NORMAL+': '◈', 'STACKED': '⚡', 'EVE
 // Cache week data so button clicks don't re-fetch
 let _envWeekCache = null; // { ts, allEvents, weekData }
 
+// Bridges title/notes from the Log Trade modal to the Win/Loss/Breakeven
+// buttons, and on to the RR modal — Discord can't chain modal -> modal
+// directly, so this holds the in-progress entry per user between steps.
+// Entries self-expire after 10 min so a half-finished log doesn't linger.
+const _journalPending = new Map(); // discordId -> { title, notes, ts }
+function _journalPendingSet(discordId, data) {
+  _journalPending.set(discordId, { ...data, ts: Date.now() });
+}
+function _journalPendingGet(discordId) {
+  const entry = _journalPending.get(discordId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > 10 * 60 * 1000) { _journalPending.delete(discordId); return null; }
+  return entry;
+}
+
 async function getEnvWeekData() {
   const now = Date.now();
   if (_envWeekCache && (now - _envWeekCache.ts) < 12 * 60 * 60 * 1000) return _envWeekCache.weekData;
@@ -1541,6 +1556,7 @@ const STAFF_ROLE_IDS = [
 
 const ASSISTANT_COACH_ROLE_ID = '1508394582952509490';
 const SIGNALS_CH_ID = '1534128320612925500'; // /dropsignal always posts here, regardless of which channel the command was run in
+const JOURNAL_CH_ID = '1551272475990560959'; // Log Trade / My Stats buttons live here, all Vol holders
 
 // /dropsignal eligibility: any Volume tier, staff, or Assistant Coach.
 function _canDropSignal(member) {
@@ -1556,6 +1572,63 @@ function _canDropSignal(member) {
 // once sent, cancelled, or naturally stale after a while (best-effort sweep
 // isn't needed given how short-lived these are in practice).
 const signalDrafts = new Map(); // userId -> { asset, direction, stop, tp }
+
+// Builds the My Stats embed for a user's trade journal — this week, last
+// week, this month, last month, and all-time-to-date. Week starts Monday
+// (matches how the rest of the bot reasons about trading weeks elsewhere,
+// e.g. _envOverrides/DOW_LABELS), month is plain calendar month.
+function _buildJournalStatsEmbed(user, trades) {
+  const now = new Date();
+
+  function startOfWeek(d) {
+    const day = d.getDay(); // 0 = Sunday
+    const diff = day === 0 ? 6 : day - 1; // days since Monday
+    const s = new Date(d);
+    s.setHours(0, 0, 0, 0);
+    s.setDate(s.getDate() - diff);
+    return s;
+  }
+  const thisWeekStart = startOfWeek(now);
+  const lastWeekStart = new Date(thisWeekStart); lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+  function statsFor(list) {
+    const n = list.length;
+    if (n === 0) return { n, winRate: null, avgRR: null, wins: 0, losses: 0, be: 0, totalRR: 0 };
+    const wins = list.filter(t => t.outcome === 'W').length;
+    const losses = list.filter(t => t.outcome === 'L').length;
+    const be = list.filter(t => t.outcome === 'BE').length;
+    const decided = wins + losses; // breakevens excluded from win-rate denominator
+    const winRate = decided > 0 ? (wins / decided) * 100 : null;
+    const totalRR = list.reduce((sum, t) => sum + (Number.isFinite(t.rr) ? t.rr : 0), 0);
+    const avgRR = totalRR / n;
+    return { n, winRate, avgRR, wins, losses, be, totalRR };
+  }
+
+  const fmt = s => s.n === 0
+    ? 'No trades logged'
+    : `${s.n} trade${s.n === 1 ? '' : 's'} · ${s.wins}W / ${s.losses}L / ${s.be}BE\n` +
+      `Win rate: ${s.winRate === null ? 'N/A' : s.winRate.toFixed(1) + '%'} · Avg RR: ${s.avgRR >= 0 ? '+' : ''}${s.avgRR.toFixed(2)}R · Total: ${s.totalRR >= 0 ? '+' : ''}${s.totalRR.toFixed(2)}R`;
+
+  const thisWeek = trades.filter(t => new Date(t.createdAt) >= thisWeekStart);
+  const lastWeek = trades.filter(t => { const d = new Date(t.createdAt); return d >= lastWeekStart && d < thisWeekStart; });
+  const thisMonth = trades.filter(t => new Date(t.createdAt) >= thisMonthStart);
+  const lastMonth = trades.filter(t => { const d = new Date(t.createdAt); return d >= lastMonthStart && d < thisMonthStart; });
+
+  return new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle(`📊 ${user.username}'s Trade Stats`)
+    .addFields(
+      { name: 'This Week', value: fmt(statsFor(thisWeek)) },
+      { name: 'Last Week', value: fmt(statsFor(lastWeek)) },
+      { name: 'This Month', value: fmt(statsFor(thisMonth)) },
+      { name: 'Last Month', value: fmt(statsFor(lastMonth)) },
+      { name: 'All-Time (to today)', value: fmt(statsFor(trades)) },
+    )
+    .setFooter({ text: 'The Smart Money Paradigm · Trade Journal' })
+    .setTimestamp();
+}
 
 // Posts a finished signal to SIGNALS_CH_ID with W/L/Criteria buttons, saves it
 // to the website via the Worker, and returns the posted message (or null if
@@ -3047,6 +3120,26 @@ async function postAccessButton(channel) {
   await channel.send({ embeds: [embed], components: [row] });
 }
 
+async function postJournalButtons(channel) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('journal_log_trade').setLabel('Log Trade').setEmoji('📝').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('journal_my_stats').setLabel('My Stats').setEmoji('📊').setStyle(ButtonStyle.Primary),
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle('📓  Trade Journal')
+    .setDescription(
+      `Log your trades and track your stats.\n\n` +
+      `**Log Trade** — record a trade with a title, notes, and outcome.\n` +
+      `**My Stats** — see your win rate, average RR, and trade count across this week, last week, this month, last month, and all-time.\n\n` +
+      `Your log is private to you — nobody else sees your entries.`
+    )
+    .setFooter({ text: 'The Smart Money Paradigm  ·  Trade Journal' });
+
+  await channel.send({ embeds: [embed], components: [row] });
+}
+
 // ── Handle interactions ──
 client.on(Events.InteractionCreate, async interaction => {
   try {
@@ -4422,6 +4515,15 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
 
+      if (commandName === 'setup-journal') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.reply({ content: 'Posting journal buttons...', ephemeral: true });
+        const ch = guild.channels.cache.get(JOURNAL_CH_ID);
+        if (ch) await postJournalButtons(ch);
+        return interaction.editReply({ content: 'Done.' });
+      }
+
       if (commandName === 'news-protocols') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -5196,6 +5298,89 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: 'Which asset?', components: [row] });
       }
 
+      // ── Trade Journal: Log Trade button — opens the title/notes modal. ──
+      if (customId === 'journal_log_trade') {
+        const modal = new ModalBuilder()
+          .setCustomId('journal_new_modal')
+          .setTitle('Log a Trade');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('jt_title').setLabel('Trade Title').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. NQ Asia sweep long')
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('jt_notes').setLabel('Notes').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('Optional — setup, reasoning, anything worth remembering')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
+      // ── Trade Journal: My Stats button — computes and shows the stat breakdown. ──
+      if (customId === 'journal_my_stats') {
+        await interaction.deferReply({ ephemeral: true });
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/journal/list', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ discordId: interaction.user.id }),
+          });
+          const d = await r.json();
+          if (!d.ok) return interaction.editReply({ content: 'Could not load your stats — try again shortly.' });
+
+          const embed = _buildJournalStatsEmbed(interaction.user, d.trades || []);
+          return interaction.editReply({ embeds: [embed] });
+        } catch (e) {
+          console.error('[journal my stats] failed:', e.message);
+          return interaction.editReply({ content: 'Something went wrong loading your stats.' });
+        }
+      }
+
+      // ── Trade Journal: outcome buttons (Win / Loss / Breakeven). Breakeven
+      // saves immediately since RR is 0 by definition; Win/Loss open the RR
+      // modal, since Discord can't chain modal -> modal, the outcome has to
+      // be a button click in between. ──
+      if (customId.startsWith('journal_outcome|')) {
+        const outcome = customId.split('|')[1]; // W | L | BE
+        const pending = _journalPendingGet(interaction.user.id);
+        if (!pending) {
+          return interaction.update({ content: 'That trade log expired — click Log Trade again.', components: [] });
+        }
+
+        if (outcome === 'BE') {
+          await interaction.update({ content: 'Saving...', components: [] });
+          try {
+            const r = await fetch('https://smp-join.poshop608.workers.dev/bot/journal/add', {
+              method: 'POST',
+              headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: `jt_${Date.now()}_${interaction.user.id}`,
+                discordId: interaction.user.id,
+                username: interaction.user.username,
+                title: pending.title,
+                notes: pending.notes,
+                outcome: 'BE',
+              }),
+            });
+            const d = await r.json();
+            _journalPending.delete(interaction.user.id);
+            if (!d.ok) return interaction.editReply({ content: 'Could not save the trade — try again.' });
+            return interaction.editReply({ content: `✅ Logged **${pending.title}** — Breakeven.` });
+          } catch (e) {
+            console.error('[journal outcome BE] failed:', e.message);
+            return interaction.editReply({ content: 'Something went wrong saving the trade.' });
+          }
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId(`journal_rr_modal|${outcome}`)
+          .setTitle(outcome === 'W' ? 'Trade Won — RR' : 'Trade Lost — RR');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('jt_rr').setLabel('RR (just the number, e.g. 3)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('e.g. 3 or 2.5')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
       // ── /dropsignal: "Signal" path — step 2, pick the asset then direction. ──
       if (customId.startsWith('dropsignal_asset_')) {
         const draft = signalDrafts.get(interaction.user.id);
@@ -5696,6 +5881,63 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       return interaction.editReply({ content: `Marked as a win — +${points} points recorded.` });
+    }
+
+    // ── Trade Journal: Log Trade modal submit — stashes title/notes, then
+    // shows the Win/Loss/Breakeven buttons. ──
+    if (interaction.isModalSubmit() && interaction.customId === 'journal_new_modal') {
+      const title = interaction.fields.getTextInputValue('jt_title').trim();
+      const notes = interaction.fields.getTextInputValue('jt_notes').trim() || null;
+      _journalPendingSet(interaction.user.id, { title, notes });
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('journal_outcome|W').setLabel('Win').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('journal_outcome|L').setLabel('Loss').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('journal_outcome|BE').setLabel('Breakeven').setStyle(ButtonStyle.Secondary),
+      );
+      return interaction.reply({ content: `**${title}** — what was the outcome?`, components: [row], ephemeral: true });
+    }
+
+    // ── Trade Journal: RR modal submit (Win or Loss) — sign applied based on
+    // outcome, user just types the plain number. ──
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('journal_rr_modal|')) {
+      await interaction.deferReply({ ephemeral: true });
+
+      const outcome = interaction.customId.split('|')[1]; // W | L
+      const pending = _journalPendingGet(interaction.user.id);
+      if (!pending) return interaction.editReply({ content: 'That trade log expired — click Log Trade again.' });
+
+      const rrRaw = interaction.fields.getTextInputValue('jt_rr').trim();
+      const rrAbs = Number(rrRaw.replace(/[^0-9.]/g, ''));
+      if (!Number.isFinite(rrAbs)) {
+        return interaction.editReply({ content: `"${rrRaw}" isn't a valid number — click Log Trade again and enter RR as a plain number, e.g. 3.` });
+      }
+      const rr = outcome === 'W' ? Math.abs(rrAbs) : -Math.abs(rrAbs);
+
+      try {
+        const r = await fetch('https://smp-join.poshop608.workers.dev/bot/journal/add', {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: `jt_${Date.now()}_${interaction.user.id}`,
+            discordId: interaction.user.id,
+            username: interaction.user.username,
+            title: pending.title,
+            notes: pending.notes,
+            outcome,
+            rr,
+          }),
+        });
+        const d = await r.json();
+        _journalPending.delete(interaction.user.id);
+        if (!d.ok) return interaction.editReply({ content: 'Could not save the trade — try again.' });
+
+        const label = outcome === 'W' ? `✅ Win, +${rrAbs}R` : `❌ Loss, -${rrAbs}R`;
+        return interaction.editReply({ content: `Logged **${pending.title}** — ${label}.` });
+      } catch (e) {
+        console.error('[journal rr modal] failed:', e.message);
+        return interaction.editReply({ content: 'Something went wrong saving the trade.' });
+      }
     }
 
   } catch (err) {
