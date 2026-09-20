@@ -1630,6 +1630,42 @@ function _buildJournalStatsEmbed(user, trades) {
     .setTimestamp();
 }
 
+// Founder-only: groups the full trade list by user and builds one compact
+// embed per logger, all-time stats only (no weekly/monthly breakdown here —
+// that's what My Stats is for on a per-user basis). Sorted by trade count
+// descending so the most active loggers show up first.
+function _buildJournalFounderEmbeds(trades) {
+  const byUser = new Map(); // discordId -> { username, trades: [] }
+  for (const t of trades) {
+    if (!byUser.has(t.discordId)) byUser.set(t.discordId, { username: t.username, trades: [] });
+    byUser.get(t.discordId).trades.push(t);
+  }
+
+  const rows = [...byUser.entries()].map(([discordId, data]) => {
+    const list = data.trades;
+    const n = list.length;
+    const wins = list.filter(t => t.outcome === 'W').length;
+    const losses = list.filter(t => t.outcome === 'L').length;
+    const be = list.filter(t => t.outcome === 'BE').length;
+    const decided = wins + losses;
+    const winRate = decided > 0 ? (wins / decided) * 100 : null;
+    const totalRR = list.reduce((sum, t) => sum + (Number.isFinite(t.rr) ? t.rr : 0), 0);
+    const avgRR = n > 0 ? totalRR / n : 0;
+    return { discordId, username: data.username, n, wins, losses, be, winRate, avgRR, totalRR };
+  }).sort((a, b) => b.n - a.n);
+
+  return rows.map(r => new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle(`${r.username}`)
+    .setDescription(
+      `<@${r.discordId}>\n\n` +
+      `**${r.n}** trade${r.n === 1 ? '' : 's'} logged · ${r.wins}W / ${r.losses}L / ${r.be}BE\n` +
+      `Win rate: ${r.winRate === null ? 'N/A' : r.winRate.toFixed(1) + '%'}\n` +
+      `Avg RR: ${r.avgRR >= 0 ? '+' : ''}${r.avgRR.toFixed(2)}R · Total: ${r.totalRR >= 0 ? '+' : ''}${r.totalRR.toFixed(2)}R`
+    )
+  );
+}
+
 // Posts a finished signal to SIGNALS_CH_ID with W/L/Criteria buttons, saves it
 // to the website via the Worker, and returns the posted message (or null if
 // the channel/post failed). Shared by both the "Level" and "Signal" paths so
@@ -3124,6 +3160,7 @@ async function postJournalButtons(channel) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('journal_log_trade').setLabel('Log Trade').setEmoji('📝').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('journal_my_stats').setLabel('My Stats').setEmoji('📊').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('journal_founder_stats').setLabel('Server Stats').setEmoji('👑').setStyle(ButtonStyle.Secondary),
   );
 
   const embed = new EmbedBuilder()
@@ -5331,6 +5368,34 @@ client.on(Events.InteractionCreate, async interaction => {
         } catch (e) {
           console.error('[journal my stats] failed:', e.message);
           return interaction.editReply({ content: 'Something went wrong loading your stats.' });
+        }
+      }
+
+      // ── Trade Journal: Server Stats button — Founder only, shows every
+      // logged user's stats side by side. ──
+      if (customId === 'journal_founder_stats') {
+        const isFounder = interaction.member.roles.cache.has('1469222592312377374'); // Founder role
+        if (!isFounder) return interaction.reply({ content: 'Only the Founder can view server-wide stats.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+        try {
+          const r = await fetch('https://smp-join.poshop608.workers.dev/bot/journal/list-all', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+          });
+          const d = await r.json();
+          if (!d.ok) return interaction.editReply({ content: 'Could not load server stats — try again shortly.' });
+
+          const embeds = _buildJournalFounderEmbeds(d.trades || []);
+          if (embeds.length === 0) return interaction.editReply({ content: 'No trades have been logged yet.' });
+          // Discord caps 10 embeds per message; in the unlikely case of more
+          // than 10 distinct loggers, send the first page and note the rest.
+          const page = embeds.slice(0, 10);
+          const extra = embeds.length > 10 ? `\n_(${embeds.length - 10} more logger${embeds.length - 10 === 1 ? '' : 's'} not shown — narrow this down later if the roster grows.)_` : '';
+          return interaction.editReply({ content: `**All-time stats, every logger (${embeds.length} total):**${extra}`, embeds: page });
+        } catch (e) {
+          console.error('[journal founder stats] failed:', e.message);
+          return interaction.editReply({ content: 'Something went wrong loading server stats.' });
         }
       }
 
