@@ -5256,8 +5256,9 @@ client.on(Events.InteractionCreate, async interaction => {
           model22: 'https://1drv.ms/f/c/347c2f5edb3cd159/IgAgsivVreIsQYmvNWCmIFfKAazhNEpTC0suSGFWRMRAVxg?e=503cOV',
           qtmodel: 'https://drive.google.com/drive/folders/1zyNgFx6CYKlT4JLireZ9NgFcyu38q1Z_?usp=drive_link',
           artic: 'https://drive.google.com/drive/folders/138d87Aey0Xw9F1pTWrVfoGa3TwVr0pin?usp=sharing',
+          stoup: 'https://drive.google.com/drive/folders/1qT4fzdssl5BLQJirxlMIavIMQzYUhG67?usp=sharing',
         };
-        const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined', qtmodel: 'Quarterly Theory Model', artic: 'Artic' };
+        const VIDEO_SERIES_LABELS = { gbtime: 'GB Time', po3: 'PO3 Ranges', model22: '22 Model Refined', qtmodel: 'Quarterly Theory Model', artic: 'Artic', stoup: 'STOUP Video Classes' };
         const seriesLabel = VIDEO_SERIES_LABELS[seriesKey] || seriesKey;
         const link = VIDEO_DRIVE_LINKS[seriesKey];
 
