@@ -244,6 +244,11 @@ const commands = [
           { name: 'Volume IV only', value: 'Vol IV' },
           { name: '1-on-1 Only (exclusive — no Volume tier can join)', value: '1-on-1' },
         )
+    )
+    .addBooleanOption(opt =>
+      opt.setName('allow_1on1')
+        .setDescription('Let 1-on-1 members join too? Default yes. Ignored if tier is set to 1-on-1 Only.')
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
@@ -266,6 +271,11 @@ const commands = [
           { name: 'Volume IV only', value: 'Vol IV' },
           { name: '1-on-1 Only (exclusive — no Volume tier can join)', value: '1-on-1' },
         )
+    )
+    .addBooleanOption(opt =>
+      opt.setName('allow_1on1')
+        .setDescription('Let 1-on-1 members join too? Default yes. Ignored if tier is set to 1-on-1 Only.')
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()

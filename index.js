@@ -1853,17 +1853,18 @@ function _streamAllowedTiersText(requiredTier) {
   return tail;
 }
 
-function _streamEmbed({ hostId, vcName, startedAt, joined, requiredTier }) {
+function _streamEmbed({ hostId, vcName, startedAt, joined, requiredTier, allow1on1 = true }) {
+  const accessText = _streamAllowedTiersText(requiredTier) + (requiredTier !== '1-on-1' ? (allow1on1 ? ' + 1-on-1' : ' (1-on-1 excluded)') : '');
   return new EmbedBuilder()
     .setColor(0x38bdf8)
     .setTitle('🔴 Live Stream Starting')
     .setDescription(
       `<@${hostId}> is live in **${vcName}**.\n\n` +
-      `${_streamAllowedTiersText(requiredTier)}.\n\n` +
+      `${accessText}.\n\n` +
       `Click **Join VC** to lock in this stream — no undo once clicked.`
     )
     .addFields(
-      { name: 'Access', value: _streamAllowedTiersText(requiredTier), inline: false },
+      { name: 'Access', value: accessText, inline: false },
       { name: 'Joined', value: `${joined}`, inline: true },
       { name: 'Started', value: _fmtEt(startedAt), inline: true },
     );
@@ -1980,13 +1981,16 @@ function _streamMemberTierRank(member) {
 //   still gets into every regular tier, same as staff.
 // - Higher Volume tiers can attend lower-tier streams; lower tiers cannot
 //   attend higher-tier streams — a straight rank comparison otherwise.
-function _streamCanJoinTier(member, requiredTier) {
+function _streamCanJoinTier(member, requiredTier, allow1on1 = true) {
   const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
   const isOneOnOne = member.roles.cache.has(ONE_ON_ONE_ROLE_ID);
 
   if (requiredTier === '1-on-1') return isOneOnOne || isStaff;
 
-  if (isOneOnOne) return true; // 1-on-1 can join every regular Volume tier
+  // 1-on-1 holders with no Volume role of their own only get an automatic
+  // pass into regular tiers when the host explicitly allowed it (defaults
+  // to true so existing behavior doesn't silently change for old callers).
+  if (isOneOnOne && allow1on1) return true;
   return _streamMemberTierRank(member) >= (STREAM_TIER_RANK[requiredTier] || 0);
 }
 
@@ -4025,6 +4029,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
 
         const requiredTier = interaction.options.getString('tier');
+        const allow1on1 = interaction.options.getBoolean('allow_1on1') ?? true; // default: unchanged behavior
 
         if (activeStream) {
           const vcOpt = interaction.options.getChannel('channel');
@@ -4049,7 +4054,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         if (!ch) return interaction.editReply({ content: 'Stream announcement channel not found.' });
 
-        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0, requiredTier });
+        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0, requiredTier, allow1on1 });
 
         // Everyone sees Join VC. Only the button ROW differs for staff, who
         // also get Cancel Stream and End Stream — regular members never see
@@ -4063,8 +4068,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const msg = await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
         if (!msg) return interaction.editReply({ content: 'Could not post the stream announcement.' });
 
-        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, clickedUserIds: new Set(), vcTimes: new Map() };
-        return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(requiredTier)}, tracking joins for <#${vc.id}>.` });
+        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, allow1on1, clickedUserIds: new Set(), vcTimes: new Map() };
+        return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(requiredTier)}${requiredTier !== '1-on-1' ? (allow1on1 ? ' (1-on-1 can also join)' : ' (1-on-1 excluded)') : ''}, tracking joins for <#${vc.id}>.` });
       }
 
       // ── /stream-restart-vc ──
@@ -4080,6 +4085,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const vc = interaction.options.getChannel('channel');
         const requiredTier = interaction.options.getString('tier') || 'Vol I';
+        const allow1on1 = interaction.options.getBoolean('allow_1on1') ?? true;
         await interaction.deferReply({ ephemeral: true });
 
         const freshVc = interaction.guild.channels.cache.get(vc.id);
@@ -4100,7 +4106,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         if (!ch) return interaction.editReply({ content: `Kicked ${membersToKick.length} (DMed ${dmCount}), but stream announcement channel not found — start tracking manually with /host-stream.` });
 
-        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0, requiredTier });
+        const embed = _streamEmbed({ hostId: interaction.user.id, vcName: vc.name, startedAt: new Date(), joined: 0, requiredTier, allow1on1 });
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('stream_join_click').setLabel('Join VC').setEmoji('🔊').setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`stream_cancel_${interaction.user.id}`).setLabel('Cancel Stream').setEmoji('🛑').setStyle(ButtonStyle.Danger),
@@ -4115,7 +4121,7 @@ client.on(Events.InteractionCreate, async interaction => {
         // vcTimes before they even rejoin, and just keeps accruing from there.
         const vcTimes = new Map(membersToKick.map(m => [m.id, { joinedAt: null, totalMs: 10 * 60 * 1000 }]));
 
-        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, clickedUserIds: new Set(), vcTimes };
+        activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, allow1on1, clickedUserIds: new Set(), vcTimes };
         return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(requiredTier)} — tracking is live again.` });
       }
 
@@ -5346,7 +5352,7 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ content: `You're already locked in for this stream — head to <#${activeStream.vcId}>.`, ephemeral: true });
         }
 
-        if (!_streamCanJoinTier(member, activeStream.requiredTier)) {
+        if (!_streamCanJoinTier(member, activeStream.requiredTier, activeStream.allow1on1)) {
           return interaction.reply({
             content: `This stream: ${_streamAllowedTiersText(activeStream.requiredTier)} — you don't hold a high enough Volume tier to join.`,
             ephemeral: true,
@@ -5362,6 +5368,7 @@ client.on(Events.InteractionCreate, async interaction => {
           startedAt: activeStream.startedAt,
           joined: activeStream.clickedUserIds.size,
           requiredTier: activeStream.requiredTier,
+          allow1on1: activeStream.allow1on1,
         });
         interaction.message.edit({ embeds: [updatedEmbed] }).catch(() => {});
 
