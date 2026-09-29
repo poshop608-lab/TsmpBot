@@ -1558,6 +1558,9 @@ const ASSISTANT_COACH_ROLE_ID = '1508394582952509490';
 const SIGNALS_CH_ID = '1534128320612925500'; // /dropsignal always posts here, regardless of which channel the command was run in
 const JOURNAL_CH_ID = '1551272475990560959'; // Log Trade / My Stats buttons live here, all Vol holders
 const TRADE_LOG_AUDIT_CH_ID = '1551283099126464712'; // admin-only live feed of every logged trade
+const FOUNDER_ROLE_ID = '1469222592312377374';
+const V4SIGNAL_ROLE_ID = '1554472796753764392'; // grants access to #v4-signals, nothing else in Alerts category
+const V4_SIGNALS_CH_ID = '1554474761277546556'; // #v4-signals, under Alerts category, hidden until V4SIGNAL_ROLE_ID granted
 
 // /dropsignal eligibility: any Volume tier, staff, or Assistant Coach.
 function _canDropSignal(member) {
@@ -4622,6 +4625,29 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
 
+      if (commandName === 'v4signal-access') {
+        const isFounder = interaction.member.roles.cache.has(FOUNDER_ROLE_ID);
+        if (!isFounder) return interaction.reply({ content: 'Only the Founder can grant V4 Signals access.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetUser = interaction.options.getUser('user');
+        const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
+        if (!targetMember) return interaction.editReply({ content: 'Member not found in server.' });
+
+        if (targetMember.roles.cache.has(V4SIGNAL_ROLE_ID)) {
+          return interaction.editReply({ content: `<@${targetUser.id}> already has V4 Signals access.` });
+        }
+
+        await targetMember.roles.add(V4SIGNAL_ROLE_ID);
+
+        try {
+          await targetMember.send(`✅ You've been granted access to **V4 Signals** — <#${V4_SIGNALS_CH_ID}> is now unlocked.`);
+        } catch (e) { /* DMs closed */ }
+
+        return interaction.editReply({ content: `Done. <@${targetUser.id}> granted V4 Signals access.` });
+      }
+
       if (commandName === 'setup-journal') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -5024,6 +5050,30 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       // ── Assign volume role ──
+      // ── Grant V4 Signals access (from the intake thread's V4 Signals button) ──
+      // Founder-only. Just adds the V4Signal role — no vol tier, no welcome
+      // card, thread stays open for the rest of the application review.
+      if (customId.startsWith('assign_vol_v4signal_')) {
+        await interaction.deferReply({ ephemeral: true });
+
+        const isFounder = interaction.member.roles.cache.has(FOUNDER_ROLE_ID);
+        if (!isFounder) return interaction.editReply({ content: 'Only Founder can grant V4 Signals access.' });
+
+        const targetUserId = customId.replace('assign_vol_v4signal_', '');
+        const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
+        if (!targetMember) return interaction.editReply({ content: 'Member not found.' });
+
+        await targetMember.roles.add(V4SIGNAL_ROLE_ID);
+
+        await interaction.channel.send(`📡 <@${targetUserId}> granted **V4 Signals** access by <@${interaction.user.id}>.`);
+
+        try {
+          await targetMember.send(`✅ You've been granted access to **V4 Signals** — <#${V4_SIGNALS_CH_ID}> is now unlocked.`);
+        } catch (e) { /* DMs closed, channel message above still confirms it */ }
+
+        return interaction.editReply({ content: 'Done. V4 Signals access granted.' });
+      }
+
       if (customId.startsWith('assign_vol')) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -5750,7 +5800,6 @@ client.on(Events.InteractionCreate, async interaction => {
       // a ticket in the TICKETS category — same routing quirk as every other
       // Approve/Decline here. Founder-role-only (not general staff) since
       // STOUP is explicitly a founder-approves-personally resource. ──
-      const FOUNDER_ROLE_ID = '1469222592312377374';
       if (customId.startsWith('stoup_approve|') || customId.startsWith('stoup_decline|')) {
         const [action, requesterId] = customId.split('|');
         const approve = action === 'stoup_approve';
@@ -5999,11 +6048,14 @@ client.on(Events.InteractionCreate, async interaction => {
         new ButtonBuilder().setCustomId(`assign_vol_vol4_${member.user.id}`).setLabel('Vol IV').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`close_ticket_${member.user.id}`).setLabel('Close').setStyle(ButtonStyle.Danger),
       );
+      const v4Row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`assign_vol_v4signal_${member.user.id}`).setLabel('📡 V4 Signals').setStyle(ButtonStyle.Success),
+      );
 
       await thread.send({
         content: `<@&${STAFF_ROLE_IDS[0]}> <@&${STAFF_ROLE_IDS[1]}> — new access application from <@${member.user.id}>`,
         embeds: [intakeEmbed],
-        components: [volRow],
+        components: [volRow, v4Row],
       });
 
       return interaction.editReply({ content: `Your application has been submitted. Staff will review it shortly.` });

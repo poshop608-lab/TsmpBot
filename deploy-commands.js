@@ -405,6 +405,15 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('v4signal-access')
+    .setDescription('Grant a member access to #v4-signals directly (Founder only)')
+    .addUserOption(opt =>
+      opt.setName('user')
+        .setDescription('The member to grant V4 Signals access to')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('setup-journal')
     .setDescription('Post the Log Trade / My Stats buttons in the journal channel (staff only)'),
 
