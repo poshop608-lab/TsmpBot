@@ -1570,6 +1570,14 @@ function _canDropSignal(member) {
   return hasVolume || isStaff || isAssistantCoach;
 }
 
+// /dropv4signal eligibility: V4Signal role or staff — separate from
+// _canDropSignal since holding a Volume tier alone doesn't grant V4 access.
+function _canDropV4Signal(member) {
+  const hasV4 = member.roles.cache.has(V4SIGNAL_ROLE_ID);
+  const isStaff = STAFF_ROLE_IDS.some(id => member.roles.cache.has(id));
+  return hasV4 || isStaff;
+}
+
 // In-progress "Signal" path drafts (asset/direction picked via buttons, then
 // stop/TP via modal), keyed by userId — the multi-step button/modal chain has
 // no other way to carry state between separate Discord interactions. Cleared
@@ -1733,12 +1741,13 @@ function _buildJournalFounderEmbeds(trades) {
   });
 }
 
-// Posts a finished signal to SIGNALS_CH_ID with W/L/Criteria buttons, saves it
-// to the website via the Worker, and returns the posted message (or null if
-// the channel/post failed). Shared by both the "Level" and "Signal" paths so
-// the outcome-button wiring and web-save call only exist in one place.
-async function _postSignal(guild, user, { level, note, extraFields, asset, direction, stop, addStopTpButton }) {
-  const ch = guild.channels.cache.get(SIGNALS_CH_ID);
+// Posts a finished signal with W/L/Criteria buttons, saves it to the website
+// via the Worker, and returns the posted message (or null if the
+// channel/post failed). Shared by both the "Level" and "Signal" paths (and
+// by /dropv4signal via channelId/tier) so the outcome-button wiring and
+// web-save call only exist in one place.
+async function _postSignal(guild, user, { level, note, extraFields, asset, direction, stop, addStopTpButton, channelId, tier }) {
+  const ch = guild.channels.cache.get(channelId || SIGNALS_CH_ID);
   if (!ch) return null;
 
   const signalId = `sig_${Date.now()}_${user.id}`;
@@ -1785,6 +1794,7 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
         direction: direction || null,
         stop: stop || null,
         messageId: msg.id,
+        tier: tier || null,
       }),
     });
   } catch (e) {
@@ -4448,6 +4458,23 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: 'What are you dropping?', components: [row], ephemeral: true });
       }
 
+      // ── /dropv4signal ── Same Level/Signal flow as /dropsignal, reusing
+      // every button/modal step below (they're keyed off the shared
+      // signalDrafts map, not the command name) — only the eligibility gate
+      // and the draft's v4 flag differ, which is what routes the final post
+      // to V4_SIGNALS_CH_ID with tier: 'v4' instead of the regular channel.
+      if (commandName === 'dropv4signal') {
+        if (!_canDropV4Signal(interaction.member)) {
+          return interaction.reply({ content: 'No permission.', ephemeral: true });
+        }
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('dropv4signal_pick_level').setLabel('Level').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropv4signal_pick_signal').setLabel('Signal').setStyle(ButtonStyle.Success),
+        );
+        return interaction.reply({ content: '📡 What are you dropping to V4 Signals?', components: [row], ephemeral: true });
+      }
+
       if (commandName === 'clear-welcome') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
@@ -5502,6 +5529,19 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: 'Which asset?', components: [row] });
       }
 
+      // ── /dropv4signal: "Level" path — same as above but flags the draft
+      // v4:true so the eventual post (asset/dir/modal steps below, shared
+      // with /dropsignal) routes to V4_SIGNALS_CH_ID with tier 'v4'. ──
+      if (customId === 'dropv4signal_pick_level') {
+        signalDrafts.set(interaction.user.id, { kind: 'level', v4: true });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('dropsignal_asset_NQ').setLabel('NQ').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_ES').setLabel('ES').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_GOLD').setLabel('GOLD').setStyle(ButtonStyle.Primary),
+        );
+        return interaction.update({ content: '📡 Which asset?', components: [row] });
+      }
+
       // ── /dropsignal: "Signal" path — step 1, pick the asset. ──
       if (customId === 'dropsignal_pick_signal') {
         signalDrafts.set(interaction.user.id, { kind: 'signal' });
@@ -5511,6 +5551,17 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder().setCustomId('dropsignal_asset_GOLD').setLabel('GOLD').setStyle(ButtonStyle.Primary),
         );
         return interaction.update({ content: 'Which asset?', components: [row] });
+      }
+
+      // ── /dropv4signal: "Signal" path — step 1, same as above, v4:true. ──
+      if (customId === 'dropv4signal_pick_signal') {
+        signalDrafts.set(interaction.user.id, { kind: 'signal', v4: true });
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('dropsignal_asset_NQ').setLabel('NQ').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_ES').setLabel('ES').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('dropsignal_asset_GOLD').setLabel('GOLD').setStyle(ButtonStyle.Primary),
+        );
+        return interaction.update({ content: '📡 Which asset?', components: [row] });
       }
 
       // ── Trade Journal: Log Trade button — opens the title/notes modal. ──
@@ -5688,7 +5739,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
         draft.direction = customId.replace('dropsignal_dir_', '');
 
-        await interaction.update({ content: 'Sending…', components: [] });
+        await interaction.update({ content: draft.v4 ? '📡 Sending…' : 'Sending…', components: [] });
 
         const msg = await _postSignal(interaction.guild, interaction.user, {
           level: 'Pending',
@@ -5702,11 +5753,15 @@ client.on(Events.InteractionCreate, async interaction => {
             { name: 'Stop', value: 'Pending', inline: true },
           ],
           addStopTpButton: true,
+          channelId: draft.v4 ? V4_SIGNALS_CH_ID : SIGNALS_CH_ID,
+          tier: draft.v4 ? 'v4' : null,
         });
         signalDrafts.delete(interaction.user.id);
 
         return interaction.editReply({
-          content: msg ? 'Signal dropped — add Stop & TP from the message when ready.' : 'Could not post the signal — check the signals channel exists.',
+          content: msg
+            ? (draft.v4 ? '📡 V4 Signal dropped — add Stop & TP from the message when ready.' : 'Signal dropped — add Stop & TP from the message when ready.')
+            : 'Could not post the signal — check the signals channel exists.',
         });
       }
 
@@ -6069,12 +6124,17 @@ client.on(Events.InteractionCreate, async interaction => {
       const note = interaction.fields.getTextInputValue('sig_note') || null;
       const draft = signalDrafts.get(interaction.user.id);
       const asset = draft?.asset || null;
+      const isV4 = !!draft?.v4;
       signalDrafts.delete(interaction.user.id);
 
-      const msg = await _postSignal(interaction.guild, interaction.user, { level, note, asset });
+      const msg = await _postSignal(interaction.guild, interaction.user, {
+        level, note, asset,
+        channelId: isV4 ? V4_SIGNALS_CH_ID : SIGNALS_CH_ID,
+        tier: isV4 ? 'v4' : null,
+      });
       if (!msg) return interaction.editReply({ content: 'Could not post the signal — check the signals channel exists.' });
 
-      return interaction.editReply({ content: 'Signal dropped.' });
+      return interaction.editReply({ content: isV4 ? '📡 V4 Signal dropped.' : 'Signal dropped.' });
     }
 
     // ── Signal path: Add Stop & TP modal submit — signal is already live
@@ -6088,8 +6148,13 @@ client.on(Events.InteractionCreate, async interaction => {
       const stop = interaction.fields.getTextInputValue('sig_stop');
       const tp = interaction.fields.getTextInputValue('sig_tp');
 
-      const ch = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
-      const msg = ch && await ch.messages.fetch(messageId).catch(() => null);
+      // Signal could be in either channel — regular /dropsignal posts to
+      // SIGNALS_CH_ID, /dropv4signal posts to V4_SIGNALS_CH_ID. Try both
+      // rather than threading tier through the button's customId too.
+      const regularCh = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
+      const v4Ch = interaction.guild.channels.cache.get(V4_SIGNALS_CH_ID);
+      const msg = (regularCh && await regularCh.messages.fetch(messageId).catch(() => null))
+        || (v4Ch && await v4Ch.messages.fetch(messageId).catch(() => null));
       if (!msg) return interaction.editReply({ content: 'Could not find the original signal message — it may have been deleted.' });
 
       const oldEmbed = msg.embeds[0];
