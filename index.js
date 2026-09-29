@@ -4472,7 +4472,7 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder().setCustomId('dropv4signal_pick_level').setLabel('Level').setStyle(ButtonStyle.Primary),
           new ButtonBuilder().setCustomId('dropv4signal_pick_signal').setLabel('Signal').setStyle(ButtonStyle.Success),
         );
-        return interaction.reply({ content: '📡 What are you dropping to V4 Signals?', components: [row], ephemeral: true });
+        return interaction.reply({ content: 'What are you dropping to V4 Signals?', components: [row], ephemeral: true });
       }
 
       if (commandName === 'clear-welcome') {
@@ -5092,7 +5092,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await targetMember.roles.add(V4SIGNAL_ROLE_ID);
 
-        await interaction.channel.send(`📡 <@${targetUserId}> granted **V4 Signals** access by <@${interaction.user.id}>.`);
+        await interaction.channel.send(`<@${targetUserId}> granted **V4 Signals** access by <@${interaction.user.id}>.`);
 
         try {
           await targetMember.send(`✅ You've been granted access to **V4 Signals** — <#${V4_SIGNALS_CH_ID}> is now unlocked.`);
@@ -5539,7 +5539,7 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder().setCustomId('dropsignal_asset_ES').setLabel('ES').setStyle(ButtonStyle.Primary),
           new ButtonBuilder().setCustomId('dropsignal_asset_GOLD').setLabel('GOLD').setStyle(ButtonStyle.Primary),
         );
-        return interaction.update({ content: '📡 Which asset?', components: [row] });
+        return interaction.update({ content: 'Which asset?', components: [row] });
       }
 
       // ── /dropsignal: "Signal" path — step 1, pick the asset. ──
@@ -5561,7 +5561,7 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder().setCustomId('dropsignal_asset_ES').setLabel('ES').setStyle(ButtonStyle.Primary),
           new ButtonBuilder().setCustomId('dropsignal_asset_GOLD').setLabel('GOLD').setStyle(ButtonStyle.Primary),
         );
-        return interaction.update({ content: '📡 Which asset?', components: [row] });
+        return interaction.update({ content: 'Which asset?', components: [row] });
       }
 
       // ── Trade Journal: Log Trade button — opens the title/notes modal. ──
@@ -5739,7 +5739,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!draft) return interaction.update({ content: 'That signal draft expired — run /dropsignal again.', components: [] });
         draft.direction = customId.replace('dropsignal_dir_', '');
 
-        await interaction.update({ content: draft.v4 ? '📡 Sending…' : 'Sending…', components: [] });
+        await interaction.update({ content: 'Sending…', components: [] });
 
         const msg = await _postSignal(interaction.guild, interaction.user, {
           level: 'Pending',
@@ -5760,7 +5760,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         return interaction.editReply({
           content: msg
-            ? (draft.v4 ? '📡 V4 Signal dropped — add Stop & TP from the message when ready.' : 'Signal dropped — add Stop & TP from the message when ready.')
+            ? (draft.v4 ? 'V4 Signal dropped — add Stop & TP from the message when ready.' : 'Signal dropped — add Stop & TP from the message when ready.')
             : 'Could not post the signal — check the signals channel exists.',
         });
       }
@@ -6104,7 +6104,7 @@ client.on(Events.InteractionCreate, async interaction => {
         new ButtonBuilder().setCustomId(`close_ticket_${member.user.id}`).setLabel('Close').setStyle(ButtonStyle.Danger),
       );
       const v4Row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`assign_vol_v4signal_${member.user.id}`).setLabel('📡 V4 Signals').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`assign_vol_v4signal_${member.user.id}`).setLabel('V4 Signals').setStyle(ButtonStyle.Success),
       );
 
       await thread.send({
@@ -6134,7 +6134,7 @@ client.on(Events.InteractionCreate, async interaction => {
       });
       if (!msg) return interaction.editReply({ content: 'Could not post the signal — check the signals channel exists.' });
 
-      return interaction.editReply({ content: isV4 ? '📡 V4 Signal dropped.' : 'Signal dropped.' });
+      return interaction.editReply({ content: isV4 ? 'V4 Signal dropped.' : 'Signal dropped.' });
     }
 
     // ── Signal path: Add Stop & TP modal submit — signal is already live
