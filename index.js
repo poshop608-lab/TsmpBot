@@ -5136,6 +5136,12 @@ client.on(Events.InteractionCreate, async interaction => {
       if (customId === 'v4access_request') {
         await interaction.deferReply({ ephemeral: true });
 
+        const isVol4 = interaction.member.roles.cache.has(VOLUME_ROLES['Vol IV'].id);
+        const isStaffMember = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isVol4 && !isStaffMember) {
+          return interaction.editReply({ content: "You don't have access to this content." });
+        }
+
         const existing = interaction.channel.threads.cache.find(
           t => t.name === `v4access-${interaction.user.username}` && !t.archived
         );
