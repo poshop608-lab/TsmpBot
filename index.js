@@ -1642,7 +1642,7 @@ function _canDropSignal(member) {
   return hasVolume || isStaff || isAssistantCoach;
 }
 
-// /dropv4signal eligibility: V4Signal role or staff — separate from
+// /signalv4 eligibility: V4Signal role or staff — separate from
 // _canDropSignal since holding a Volume tier alone doesn't grant V4 access.
 function _canDropV4Signal(member) {
   const hasV4 = member.roles.cache.has(V4SIGNAL_ROLE_ID);
@@ -1816,7 +1816,7 @@ function _buildJournalFounderEmbeds(trades) {
 // Posts a finished signal with W/L/Criteria buttons, saves it to the website
 // via the Worker, and returns the posted message (or null if the
 // channel/post failed). Shared by both the "Level" and "Signal" paths (and
-// by /dropv4signal via channelId/tier) so the outcome-button wiring and
+// by /signalv4 via channelId/tier) so the outcome-button wiring and
 // web-save call only exist in one place.
 async function _postSignal(guild, user, { level, note, extraFields, asset, direction, stop, addStopTpButton, channelId, tier }) {
   const ch = guild.channels.cache.get(channelId || SIGNALS_CH_ID);
@@ -4556,19 +4556,19 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ content: 'What are you dropping?', components: [row], ephemeral: true });
       }
 
-      // ── /dropv4signal ── Same Level/Signal flow as /dropsignal, reusing
+      // ── /signalv4 ── Same Level/Signal flow as /dropsignal, reusing
       // every button/modal step below (they're keyed off the shared
       // signalDrafts map, not the command name) — only the eligibility gate
       // and the draft's v4 flag differ, which is what routes the final post
       // to V4_SIGNALS_CH_ID with tier: 'v4' instead of the regular channel.
-      if (commandName === 'dropv4signal') {
+      if (commandName === 'signalv4') {
         if (!_canDropV4Signal(interaction.member)) {
           return interaction.reply({ content: 'No permission.', ephemeral: true });
         }
 
         const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('dropv4signal_pick_level').setLabel('Level').setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId('dropv4signal_pick_signal').setLabel('Signal').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId('signalv4_pick_level').setLabel('Level').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('signalv4_pick_signal').setLabel('Signal').setStyle(ButtonStyle.Success),
         );
         return interaction.reply({ content: 'What are you dropping to V4 Signals?', components: [row], ephemeral: true });
       }
@@ -5778,10 +5778,10 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: 'Which asset?', components: [row] });
       }
 
-      // ── /dropv4signal: "Level" path — same as above but flags the draft
+      // ── /signalv4: "Level" path — same as above but flags the draft
       // v4:true so the eventual post (asset/dir/modal steps below, shared
       // with /dropsignal) routes to V4_SIGNALS_CH_ID with tier 'v4'. ──
-      if (customId === 'dropv4signal_pick_level') {
+      if (customId === 'signalv4_pick_level') {
         signalDrafts.set(interaction.user.id, { kind: 'level', v4: true });
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('dropsignal_asset_NQ').setLabel('NQ').setStyle(ButtonStyle.Primary),
@@ -5802,8 +5802,8 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.update({ content: 'Which asset?', components: [row] });
       }
 
-      // ── /dropv4signal: "Signal" path — step 1, same as above, v4:true. ──
-      if (customId === 'dropv4signal_pick_signal') {
+      // ── /signalv4: "Signal" path — step 1, same as above, v4:true. ──
+      if (customId === 'signalv4_pick_signal') {
         signalDrafts.set(interaction.user.id, { kind: 'signal', v4: true });
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('dropsignal_asset_NQ').setLabel('NQ').setStyle(ButtonStyle.Primary),
@@ -6454,7 +6454,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const tp = interaction.fields.getTextInputValue('sig_tp');
 
       // Signal could be in either channel — regular /dropsignal posts to
-      // SIGNALS_CH_ID, /dropv4signal posts to V4_SIGNALS_CH_ID. Try both
+      // SIGNALS_CH_ID, /signalv4 posts to V4_SIGNALS_CH_ID. Try both
       // rather than threading tier through the button's customId too.
       const regularCh = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
       const v4Ch = interaction.guild.channels.cache.get(V4_SIGNALS_CH_ID);

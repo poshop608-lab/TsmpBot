@@ -371,7 +371,7 @@ const commands = [
     .setDescription('Drop a live signal — posts in general and shows on the website (Volume/staff/Assistant Coach)'),
 
   new SlashCommandBuilder()
-    .setName('dropv4signal')
+    .setName('signalv4')
     .setDescription('Drop a V4 signal — posts in #v4-signals and shows in the V4 section on the website (V4Signal/staff)'),
 
   new SlashCommandBuilder()
