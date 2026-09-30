@@ -6505,8 +6505,12 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `"${pointsRaw}" isn't a valid number — resolve the signal again and enter points as a number, e.g. 1840.75.` });
       }
 
-      const ch = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
-      const msg = ch && await ch.messages.fetch(messageId).catch(() => null);
+      // Signal could be in either channel — regular /dropsignal posts to
+      // SIGNALS_CH_ID, /signalv4 posts to V4_SIGNALS_CH_ID.
+      const regularCh = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
+      const v4Ch = interaction.guild.channels.cache.get(V4_SIGNALS_CH_ID);
+      const msg = (regularCh && await regularCh.messages.fetch(messageId).catch(() => null))
+        || (v4Ch && await v4Ch.messages.fetch(messageId).catch(() => null));
       if (!msg) return interaction.editReply({ content: 'Could not find the original signal message — it may have been deleted.' });
 
       const oldEmbed = msg.embeds[0];
