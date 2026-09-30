@@ -1765,7 +1765,13 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
   );
   if (note) embed.addFields({ name: 'Note', value: note });
 
-  const msg = await ch.send({ embeds: [embed] }).catch(() => null);
+  // Ping V4Signal on every V4 signal so the embed shows up as a real
+  // notification (Discord only pings on a role mention in content, not
+  // inside an embed field) — matches "tag them w the embed msg trade
+  // details automatically".
+  const pingContent = channelId === V4_SIGNALS_CH_ID ? `<@&${V4SIGNAL_ROLE_ID}>` : undefined;
+
+  const msg = await ch.send({ content: pingContent, embeds: [embed] }).catch(() => null);
   if (!msg) return null;
 
   const rowButtons = [
