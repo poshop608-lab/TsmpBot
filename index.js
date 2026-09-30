@@ -1849,6 +1849,7 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|W`).setLabel('W').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`signal_alert|${signalId}`).setLabel('Alert').setEmoji('🔔').setStyle(ButtonStyle.Primary),
   ];
   const rows = [new ActionRowBuilder().addComponents(...rowButtons)];
   if (addStopTpButton) {
@@ -6236,6 +6237,27 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      // ── Signal Alert button — "price is close to the level" nudge. Opens
+      // a modal (current price + notes, both optional/skippable). On submit,
+      // fires the V4 relay webhook (if this is a V4 signal) and edits the
+      // embed to flag it. Open to anyone, not just the poster — the whole
+      // point is letting others flag it too. ──
+      if (customId.startsWith('signal_alert|')) {
+        const [, signalId] = customId.split('|');
+        const modal = new ModalBuilder()
+          .setCustomId(`signal_alert_modal|${signalId}|${interaction.message.id}`)
+          .setTitle('Alert — Price Near Level');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('alert_price').setLabel('Current price (optional)').setStyle(TextInputStyle.Short).setRequired(false).setPlaceholder('e.g. 21498.50')
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('alert_note').setLabel('Notes (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('e.g. wick tapped it, watching for reaction')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
       // ── Force-cancel a stuck stream from /host-stream's conflict prompt,
       // then immediately post the new stream announcement the user wanted. ──
       if (customId.startsWith('stream_force_cancel_')) {
@@ -6498,6 +6520,48 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       return interaction.editReply({ content: `Marked as a win — +${points} points recorded.` });
+    }
+
+    // ── Signal Alert modal submit — edits the embed to flag "price is close
+    // to the level" and fires the V4 relay webhook with the price/note a
+    // student typed in (both were optional — either can be skipped). ──
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('signal_alert_modal|')) {
+      await interaction.deferReply({ ephemeral: true });
+
+      const [, signalId, messageId] = interaction.customId.split('|');
+      const price = interaction.fields.getTextInputValue('alert_price').trim() || null;
+      const alertNote = interaction.fields.getTextInputValue('alert_note').trim() || null;
+
+      // Signal could be in either channel — same reasoning as the Stop/TP
+      // completion handler above.
+      const regularCh = interaction.guild.channels.cache.get(SIGNALS_CH_ID);
+      const v4Ch = interaction.guild.channels.cache.get(V4_SIGNALS_CH_ID);
+      const msg = (regularCh && await regularCh.messages.fetch(messageId).catch(() => null))
+        || (v4Ch && await v4Ch.messages.fetch(messageId).catch(() => null));
+      if (!msg) return interaction.editReply({ content: 'Could not find the original signal message — it may have been deleted.' });
+
+      const oldEmbed = msg.embeds[0];
+      const alertValue = price ? `🔔 Price is close to the level (${price})` : '🔔 Price is close to the level';
+      const hasAlertField = (oldEmbed.fields || []).some(f => f.name === 'Alert');
+      const updatedEmbed = EmbedBuilder.from(oldEmbed);
+      if (hasAlertField) {
+        updatedEmbed.setFields((oldEmbed.fields || []).map(f => f.name === 'Alert' ? { name: 'Alert', value: alertValue } : f));
+      } else {
+        updatedEmbed.addFields({ name: 'Alert', value: alertValue });
+      }
+      await msg.edit({ embeds: [updatedEmbed] }).catch(() => {});
+
+      try {
+        await fetch('https://smp-join.poshop608.workers.dev/bot/signals/alert', {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: signalId, price, note: alertNote }),
+        });
+      } catch (e) {
+        console.error('[signal alert] web relay failed:', e.message);
+      }
+
+      return interaction.editReply({ content: 'Alert sent.' });
     }
 
     // ── Trade Journal: Log Trade modal submit — stashes title/notes, then
