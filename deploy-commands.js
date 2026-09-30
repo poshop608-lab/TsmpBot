@@ -50,6 +50,7 @@ const commands = [
         .addChoices(
           { name: 'Asia Mech Model', value: 'asia-mech' },
           { name: 'London Mech Model', value: 'london-mech' },
+          { name: 'NYAM Mech Model', value: 'nyam-mech' },
           { name: 'Trinity Framework', value: 'trinity' },
           { name: 'Goldbach Time & PO3 Ranges', value: 'gbt' },
           { name: 'News Protocols', value: 'news-protocols' },
