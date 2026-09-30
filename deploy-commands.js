@@ -422,6 +422,10 @@ const commands = [
     .setDescription('Post the Log Trade / My Stats buttons in the journal channel (staff only)'),
 
   new SlashCommandBuilder()
+    .setName('setup-v4access')
+    .setDescription('Post the Request Access / Setup Webhook buttons in v4-signals-access (staff only)'),
+
+  new SlashCommandBuilder()
     .setName('reset-journal-stats')
     .setDescription('Permanently delete a user\'s trade journal history (Founder only)')
     .addUserOption(opt =>

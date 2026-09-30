@@ -1561,6 +1561,7 @@ const TRADE_LOG_AUDIT_CH_ID = '1551283099126464712'; // admin-only live feed of 
 const FOUNDER_ROLE_ID = '1469222592312377374';
 const V4SIGNAL_ROLE_ID = '1554472796753764392'; // grants access to #v4-signals, nothing else in Alerts category
 const V4_SIGNALS_CH_ID = '1554474761277546556'; // #v4-signals, under Alerts category, hidden until V4SIGNAL_ROLE_ID granted
+const V4_ACCESS_CH_ID = '1554801371851653253'; // #v4-signals-access — Request Access / Setup Webhook buttons, visible to Vol I-IV + Mentee
 
 // /dropsignal eligibility: any Volume tier, staff, or Assistant Coach.
 function _canDropSignal(member) {
@@ -3258,6 +3259,25 @@ async function postJournalButtons(channel) {
   await channel.send({ embeds: [embed], components: [row] });
 }
 
+async function postV4AccessButtons(channel) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('v4access_request').setLabel('Request V4 Signals Access').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('v4access_webhook').setLabel('Setup Webhook').setStyle(ButtonStyle.Primary),
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle('V4 Signals — Access')
+    .setDescription(
+      `**Request V4 Signals Access** — opens a private thread. You'll be shown the rules/disclaimer, ` +
+      `agree to them, then Founder reviews and approves. Once approved you're granted the V4 Signals role and the channel unlocks.\n\n` +
+      `**Setup Webhook** — V4 Signals holders only. Register a URL (Notialarm, ntfy.sh, Zapier, etc.) to get every V4 signal pushed to an app of your choice.`
+    )
+    .setFooter({ text: 'The Smart Money Paradigm  ·  V4 Signals' });
+
+  await channel.send({ embeds: [embed], components: [row] });
+}
+
 // ── Handle interactions ──
 client.on(Events.InteractionCreate, async interaction => {
   try {
@@ -4684,6 +4704,15 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: 'Done.' });
       }
 
+      if (commandName === 'setup-v4access') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.reply({ content: 'Posting V4 access buttons...', ephemeral: true });
+        const ch = guild.channels.cache.get(V4_ACCESS_CH_ID);
+        if (ch) await postV4AccessButtons(ch);
+        return interaction.editReply({ content: 'Done.' });
+      }
+
       if (commandName === 'reset-journal-stats') {
         const isFounder = interaction.member.roles.cache.has('1469222592312377374'); // Founder role
         if (!isFounder) return interaction.reply({ content: 'Only the Founder can reset a trade journal.', ephemeral: true });
@@ -5099,6 +5128,140 @@ client.on(Events.InteractionCreate, async interaction => {
         } catch (e) { /* DMs closed, channel message above still confirms it */ }
 
         return interaction.editReply({ content: 'Done. V4 Signals access granted.' });
+      }
+
+      // ── V4 Signals Access: Request Access button (in #v4-signals-access) ──
+      // Opens a private thread, posts rules/disclaimer + "I Agree" button.
+      // Founder can't approve until the requester agrees — see v4access_agree.
+      if (customId === 'v4access_request') {
+        await interaction.deferReply({ ephemeral: true });
+
+        const existing = interaction.channel.threads.cache.find(
+          t => t.name === `v4access-${interaction.user.username}` && !t.archived
+        );
+        if (existing) return interaction.editReply({ content: `You already have an open request: ${existing}` });
+
+        const thread = await interaction.channel.threads.create({
+          name: `v4access-${interaction.user.username}`,
+          autoArchiveDuration: 1440,
+          type: 12, // GUILD_PRIVATE_THREAD
+          invitable: false,
+          reason: `V4 Signals access request from ${interaction.user.tag}`,
+        });
+
+        await thread.members.add(interaction.user.id);
+        const allMembers = await guild.members.fetch();
+        for (const m of allMembers.values()) {
+          if (m.user.bot) continue;
+          if (STAFF_ROLE_IDS.some(id => m.roles.cache.has(id))) {
+            await thread.members.add(m.id).catch(() => {});
+          }
+        }
+
+        const rulesEmbed = new EmbedBuilder()
+          .setColor(0xf87171)
+          .setTitle('V4 Signals — Rules & Disclaimer')
+          .setDescription(
+            `**You trade at your own risk. Nothing posted in V4 Signals is financial advice.**\n\n` +
+            `**Signals are educational only.** Past results never guarantee future outcomes, and no signal here is a guaranteed win.\n\n` +
+            `**You are solely responsible for every trade you place.** The Smart Money Paradigm, its Founder, and its staff carry no liability for losses incurred from acting on a signal.\n\n` +
+            `**Do not share signals outside this server.** V4 Signals access is tied to your account — sharing content here can result in access being revoked.\n\n` +
+            `Click **I Agree** below to confirm you understand and accept this before your request can be reviewed.`
+          )
+          .setFooter({ text: 'The Smart Money Paradigm  ·  V4 Signals' });
+
+        const agreeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`v4access_agree_${interaction.user.id}`).setLabel('I Agree').setStyle(ButtonStyle.Success),
+        );
+
+        await thread.send({ content: `<@${interaction.user.id}>`, embeds: [rulesEmbed], components: [agreeRow] });
+
+        return interaction.editReply({ content: `Your request has been opened: ${thread}` });
+      }
+
+      // ── V4 Signals Access: "I Agree" — only after this does Founder get
+      // an Approve button. Requester-only (checked against the id baked
+      // into the customId), so nobody can agree on someone else's behalf. ──
+      if (customId.startsWith('v4access_agree_')) {
+        const requesterId = customId.replace('v4access_agree_', '');
+        if (interaction.user.id !== requesterId) {
+          return interaction.reply({ content: 'Only the person who requested access can agree to this.', ephemeral: true });
+        }
+
+        await interaction.update({ components: [] }); // remove the Agree button, keep the rules embed visible
+
+        const approveRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`v4access_approve_${requesterId}`).setLabel('Approve').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`v4access_decline_${requesterId}`).setLabel('Decline').setStyle(ButtonStyle.Danger),
+        );
+
+        await interaction.channel.send({
+          content: `<@${requesterId}> agreed to the rules. <@&${FOUNDER_ROLE_ID}> — review and approve or decline.`,
+          components: [approveRow],
+        });
+        return;
+      }
+
+      // ── V4 Signals Access: Founder Approve/Decline — grants V4SIGNAL_ROLE_ID,
+      // DMs the requester, thread auto-closes either way. ──
+      if (customId.startsWith('v4access_approve_') || customId.startsWith('v4access_decline_')) {
+        await interaction.deferReply();
+
+        const isFounder = interaction.member.roles.cache.has(FOUNDER_ROLE_ID);
+        if (!isFounder) return interaction.editReply({ content: 'Only Founder can resolve this.' });
+
+        const approve = customId.startsWith('v4access_approve_');
+        const requesterId = customId.replace(approve ? 'v4access_approve_' : 'v4access_decline_', '');
+        const targetMember = await guild.members.fetch(requesterId).catch(() => null);
+
+        if (approve && targetMember) {
+          await targetMember.roles.add(V4SIGNAL_ROLE_ID);
+        }
+
+        try {
+          if (targetMember) {
+            await targetMember.send(
+              approve
+                ? `✅ Your **V4 Signals** access request was approved — <#${V4_SIGNALS_CH_ID}> is now unlocked.`
+                : `Your **V4 Signals** access request was declined.`
+            );
+          }
+        } catch (e) { /* DMs closed */ }
+
+        await interaction.editReply({
+          content: approve
+            ? `✅ Approved by <@${interaction.user.id}>. Closing this thread.`
+            : `Declined by <@${interaction.user.id}>. Closing this thread.`,
+        });
+
+        setTimeout(async () => {
+          await interaction.channel.setArchived(true).catch(() => {});
+          await interaction.channel.setLocked(true).catch(() => {});
+        }, 3000);
+        return;
+      }
+
+      // ── V4 Signals Access: Setup Webhook — V4Signal holders only. ──
+      if (customId === 'v4access_webhook') {
+        const hasV4 = interaction.member.roles.cache.has(V4SIGNAL_ROLE_ID);
+        if (!hasV4) {
+          return interaction.reply({ content: 'You need V4 Signals access first — click **Request V4 Signals Access** above.', ephemeral: true });
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId('v4access_webhook_modal')
+          .setTitle('Setup Webhook');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('v4wh_url')
+              .setLabel('Webhook URL')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setPlaceholder('https://your-app.com/webhook/...')
+          ),
+        );
+        return interaction.showModal(modal);
       }
 
       if (customId.startsWith('assign_vol')) {
@@ -6114,6 +6277,41 @@ client.on(Events.InteractionCreate, async interaction => {
       });
 
       return interaction.editReply({ content: `Your application has been submitted. Staff will review it shortly.` });
+    }
+
+    // ── V4 Signals: Setup Webhook modal submit — saves the URL server-side
+    // (multiple URLs per user supported), DMs confirmation. Eligibility was
+    // already checked before the modal was shown (v4access_webhook button). ──
+    if (interaction.isModalSubmit() && interaction.customId === 'v4access_webhook_modal') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const webhookUrl = interaction.fields.getTextInputValue('v4wh_url').trim();
+
+      try {
+        const r = await fetch('https://smp-join.poshop608.workers.dev/bot/v4webhook/add', {
+          method: 'POST',
+          headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ discordId: interaction.user.id, webhookUrl }),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          const reason = d.reason === 'invalid_url' ? 'That doesn\'t look like a valid URL.' : 'Could not save that webhook — try again shortly.';
+          return interaction.editReply({ content: reason });
+        }
+
+        try {
+          await interaction.user.send(
+            d.alreadyExists
+              ? `That webhook URL is already set up — you'll keep receiving V4 signals through it.`
+              : `✅ Your webhook is set up. You'll now receive every V4 signal through the app/URL you provided.`
+          );
+        } catch (e) { /* DMs closed, editReply below still confirms it */ }
+
+        return interaction.editReply({ content: d.alreadyExists ? 'That webhook is already registered.' : 'Webhook saved — check your DMs.' });
+      } catch (e) {
+        console.error('[v4access webhook] save failed:', e.message);
+        return interaction.editReply({ content: 'Something went wrong saving your webhook — try again shortly.' });
+      }
     }
 
     // ── Modal submit — drop a signal ──
