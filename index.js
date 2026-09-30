@@ -1849,8 +1849,14 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|W`).setLabel('W').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(`signal_alert|${signalId}`).setLabel('Alert').setEmoji('🔔').setStyle(ButtonStyle.Primary),
   ];
+  // Alert ("price is close to the level") only makes sense for the Level
+  // path — a Buy/Sell Signal-path post is already a live directional call
+  // at current price, there's no separate level to wait for it to approach.
+  // direction is only ever set on the Signal path, so its absence marks Level.
+  if (!direction) {
+    rowButtons.push(new ButtonBuilder().setCustomId(`signal_alert|${signalId}`).setLabel('Alert').setEmoji('🔔').setStyle(ButtonStyle.Primary));
+  }
   const rows = [new ActionRowBuilder().addComponents(...rowButtons)];
   if (addStopTpButton) {
     rows.push(new ActionRowBuilder().addComponents(
