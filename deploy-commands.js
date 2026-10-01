@@ -210,6 +210,9 @@ const commands = [
         .setRequired(false)
     ),
 
+  new SlashCommandBuilder()
+    .setName('purge-v4signals')
+    .setDescription('Delete everything in #v4-signals except the bot\'s own signal/level posts (staff only)'),
 
   new SlashCommandBuilder()
     .setName('stream-history')

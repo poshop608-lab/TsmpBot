@@ -4014,6 +4014,60 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Purged ${totalDeleted} messages from <#${targetCh.id}>.` });
       }
 
+      // ── /purge-v4signals ──
+      // Wipes everything in #v4-signals EXCEPT the bot's own signal/level
+      // posts — identified by author === bot AND an embed titled "🔔 ..."
+      // (the exact shape _postSignal always sets). Same batching strategy
+      // as /purge-channel (bulk for <14 days old, one-by-one for older).
+      if (commandName === 'purge-v4signals') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetCh = guild.channels.cache.get(V4_SIGNALS_CH_ID);
+        if (!targetCh) return interaction.editReply({ content: 'V4 Signals channel not found.' });
+
+        const isSignalPost = (m) => m.author.id === client.user.id && m.embeds.some(e => e.title && e.title.startsWith('🔔'));
+
+        let totalDeleted = 0;
+        try {
+          let before = undefined;
+          while (true) {
+            const opts = { limit: 100 };
+            if (before) opts.before = before;
+            const batch = await targetCh.messages.fetch(opts);
+            if (batch.size === 0) break;
+            before = batch.last().id;
+
+            const toDelete = batch.filter(m => !isSignalPost(m));
+            const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+            const bulkable = toDelete.filter(m => m.createdTimestamp > fourteenDaysAgo);
+            const old = toDelete.filter(m => m.createdTimestamp <= fourteenDaysAgo);
+
+            if (bulkable.size > 1) {
+              await targetCh.bulkDelete(bulkable, true);
+              totalDeleted += bulkable.size;
+            } else if (bulkable.size === 1) {
+              await bulkable.first().delete().catch(() => {});
+              totalDeleted += 1;
+            }
+
+            for (const msg of old.values()) {
+              await msg.delete().catch(() => {});
+              totalDeleted += 1;
+              await new Promise(r => setTimeout(r, 350));
+            }
+
+            if (batch.size < 100) break;
+          }
+        } catch (e) {
+          console.error('[purge-v4signals] error:', e.message);
+          return interaction.editReply({ content: `Stopped after deleting ${totalDeleted} messages — hit an error: ${e.message}` });
+        }
+
+        return interaction.editReply({ content: `✅ Cleared ${totalDeleted} message${totalDeleted === 1 ? '' : 's'} from <#${V4_SIGNALS_CH_ID}> — signal/level posts kept.` });
+      }
+
       // ── /stream-history ──
       // Shows every past /host-stream session that was ended via End Stream
       // (cancelled streams are discarded, never logged here) — start/end
