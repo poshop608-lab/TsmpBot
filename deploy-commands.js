@@ -215,6 +215,20 @@ const commands = [
     .setDescription('Delete everything in #v4-signals except the bot\'s own signal/level posts (staff only)'),
 
   new SlashCommandBuilder()
+    .setName('purge-recent')
+    .setDescription('Delete messages from the last 40 minutes in this channel, or a named channel (staff only)')
+    .addChannelOption(opt =>
+      opt.setName('channel')
+        .setDescription('Channel to purge (defaults to the channel you run this in)')
+        .setRequired(false)
+    )
+    .addIntegerOption(opt =>
+      opt.setName('minutes')
+        .setDescription('How far back to delete, in minutes (defaults to 40)')
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
     .setName('stream-history')
     .setDescription('Show past /host-stream sessions with attendance + VC minutes per person (staff only)')
     .addStringOption(opt =>

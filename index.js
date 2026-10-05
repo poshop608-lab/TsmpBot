@@ -4068,6 +4068,71 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: `✅ Cleared ${totalDeleted} message${totalDeleted === 1 ? '' : 's'} from <#${V4_SIGNALS_CH_ID}> — signal/level posts kept.` });
       }
 
+      // ── /purge-recent ──
+      // Deletes every message newer than N minutes ago (default 40) in the
+      // channel it's run in, or a named channel. Same batching strategy as
+      // /purge-channel — paginates with `before` so it keeps working past
+      // the first 100 messages, bulk-deletes anything under 14 days old,
+      // falls back to one-by-one (rate-limited) for the rest, though at a
+      // 40min-ish window everything will always be bulk-eligible in practice.
+      if (commandName === 'purge-recent') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetCh = interaction.options.getChannel('channel') || interaction.channel;
+        const minutes = interaction.options.getInteger('minutes') ?? 40;
+        const cutoff = Date.now() - minutes * 60 * 1000;
+
+        let totalDeleted = 0;
+        try {
+          let before = undefined;
+          outer:
+          while (true) {
+            const opts = { limit: 100 };
+            if (before) opts.before = before;
+            const batch = await targetCh.messages.fetch(opts);
+            if (batch.size === 0) break;
+            before = batch.last().id;
+
+            const inWindow = batch.filter(m => m.createdTimestamp >= cutoff);
+            // Messages are fetched newest-first; once a page contains older-
+            // than-cutoff messages mixed with none in-window, we've walked
+            // past the window entirely — stop paginating further back.
+            if (inWindow.size === 0) break outer;
+
+            const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+            const bulkable = inWindow.filter(m => m.createdTimestamp > fourteenDaysAgo);
+            const old = inWindow.filter(m => m.createdTimestamp <= fourteenDaysAgo);
+
+            if (bulkable.size > 1) {
+              await targetCh.bulkDelete(bulkable, true);
+              totalDeleted += bulkable.size;
+            } else if (bulkable.size === 1) {
+              await bulkable.first().delete().catch(() => {});
+              totalDeleted += 1;
+            }
+
+            for (const msg of old.values()) {
+              await msg.delete().catch(() => {});
+              totalDeleted += 1;
+              await new Promise(r => setTimeout(r, 350));
+            }
+
+            // If this page had fewer in-window messages than its total size,
+            // the remainder (older than cutoff) means we've reached the edge
+            // of the window — no need to keep paginating further back.
+            if (inWindow.size < batch.size) break outer;
+            if (batch.size < 100) break;
+          }
+        } catch (e) {
+          console.error('[purge-recent] error:', e.message);
+          return interaction.editReply({ content: `Stopped after deleting ${totalDeleted} messages — hit an error: ${e.message}` });
+        }
+
+        return interaction.editReply({ content: `✅ Deleted ${totalDeleted} message${totalDeleted === 1 ? '' : 's'} from the last ${minutes} minutes in <#${targetCh.id}>.` });
+      }
+
       // ── /stream-history ──
       // Shows every past /host-stream session that was ended via End Stream
       // (cancelled streams are discarded, never logged here) — start/end
