@@ -1848,6 +1848,7 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
   const rowButtons = [
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|W`).setLabel('W').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|BE`).setLabel('BE').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
   ];
   // Alert ("price is close to the level") only makes sense for the Level
@@ -6343,7 +6344,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferUpdate();
 
-        const outcomeLabel = { L: '❌ Loss', criteria_not_met: '⚠️ Criteria Not Met' }[outcome] || outcome;
+        const outcomeLabel = { L: '❌ Loss', BE: '➖ Breakeven', criteria_not_met: '⚠️ Criteria Not Met' }[outcome] || outcome;
         const oldEmbed = interaction.message.embeds[0];
         const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
           (oldEmbed.fields || []).map(f => f.name === 'Outcome' ? { name: 'Outcome', value: outcomeLabel, inline: true } : f)
