@@ -6669,16 +6669,17 @@ client.on(Events.InteractionCreate, async interaction => {
         || (v4Ch && await v4Ch.messages.fetch(messageId).catch(() => null));
       if (!msg) return interaction.editReply({ content: 'Could not find the original signal message — it may have been deleted.' });
 
-      const oldEmbed = msg.embeds[0];
-      const alertValue = price ? `🔔 Price is close to the level (${price})` : '🔔 Price is close to the level';
-      const hasAlertField = (oldEmbed.fields || []).some(f => f.name === 'Alert');
-      const updatedEmbed = EmbedBuilder.from(oldEmbed);
-      if (hasAlertField) {
-        updatedEmbed.setFields((oldEmbed.fields || []).map(f => f.name === 'Alert' ? { name: 'Alert', value: alertValue } : f));
-      } else {
-        updatedEmbed.addFields({ name: 'Alert', value: alertValue });
-      }
-      await msg.edit({ embeds: [updatedEmbed] }).catch(() => {});
+      // Alert now posts as a new message replying to the parent signal
+      // instead of editing its embed in place — keeps the original signal
+      // untouched and gives every alert its own timestamped, visible entry
+      // in the channel. Only pings V4Signal when it's actually a V4 signal
+      // (channel the message lives in determines that, same as the relay
+      // gate below).
+      const isV4Channel = v4Ch && msg.channel.id === v4Ch.id;
+      const alertText = price ? `Price is close to the level (${price})` : 'Price is close to the level';
+      await msg.reply({
+        content: `${isV4Channel ? `<@&${V4SIGNAL_ROLE_ID}> ` : ''}🔔 **Alert** — ${alertText}${alertNote ? `\n${alertNote}` : ''}`,
+      }).catch(() => {});
 
       try {
         await fetch('https://smp-join.poshop608.workers.dev/bot/signals/alert', {
