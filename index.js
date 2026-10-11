@@ -3377,7 +3377,7 @@ async function postV4AccessButtons(channel) {
 
 const V4_ACCESS_MSG_ID = '1554803144184037488'; // the live "V4 Signals — Access" message; STOUP buttons are added to it in place, not a new message
 const EMIL_USER_ID = '1218191041178505257'; // owns the TV account the STOUP indicator is published under, grants invite-only access manually
-const STOUP_INDI_URL = 'https://www.tradingview.com/script/96JpwSId-STDV-Fib-Active-Anchor/'; // placeholder -- swap for the real invite-only STOUP indicator link
+const STOUP_INDI_URL = 'https://www.tradingview.com/script/cfNGRSEU-STDV-Fib-Active-Anchor/'; // invite-only STOUP indicator, published under Emil's TV account
 
 // Replaces the existing message's components entirely with the current
 // 2-row layout (V4 row + STOUP row with both Fib Settings and Indi
