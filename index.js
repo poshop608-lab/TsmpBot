@@ -3353,40 +3353,60 @@ async function postJournalButtons(channel) {
 
 async function postV4AccessButtons(channel) {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('v4access_request').setLabel('Request V4 Signals Access').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('v4access_request').setLabel('V4 Access').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('v4access_webhook').setLabel('Setup Webhook').setStyle(ButtonStyle.Primary),
   );
   const stoupRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('stoupfib_request').setLabel('Request STOUP Fib Settings').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('stoupfib_request').setLabel('Req Fib Settings').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('stoupindi_request').setLabel('Req STOUP Indi').setStyle(ButtonStyle.Success),
   );
 
   const embed = new EmbedBuilder()
     .setColor(0x38bdf8)
     .setTitle('V4 Signals — Access')
     .setDescription(
-      `**Request V4 Signals Access** — opens a private thread. You'll be shown the rules/disclaimer, ` +
-      `agree to them, then Founder reviews and approves. Once approved you're granted the V4 Signals role and the channel unlocks.\n\n` +
-      `**Setup Webhook** — V4 Signals holders only. Register a URL (Notialarm, ntfy.sh, Zapier, etc.) to get every V4 signal pushed to an app of your choice.\n\n` +
-      `**Request STOUP Fib Settings** — opens a private thread. You'll confirm your name, agree to the risk disclosure & confidentiality terms, ` +
-      `then Founder reviews and approves. Once approved you'll be DM'd the fib levels to plug into the STOUP Fib indicator.`
+      `**V4 Access** — request access to V4 Signals, agree to terms, Founder approves.\n` +
+      `**Setup Webhook** — V4 holders only, push signals to your own app.\n` +
+      `**Req Fib Settings** — unlock the real STOUP Fib levels (Vol IV only).\n` +
+      `**Req STOUP Indi** — get your TradingView username added to the invite-only STOUP indicator (Vol IV only).`
     )
     .setFooter({ text: 'The Smart Money Paradigm  ·  V4 Signals' });
 
   await channel.send({ embeds: [embed], components: [row, stoupRow] });
 }
 
-const V4_ACCESS_MSG_ID = '1554803144184037488'; // the live "V4 Signals — Access" message; STOUP button is added to it in place, not a new message
+const V4_ACCESS_MSG_ID = '1554803144184037488'; // the live "V4 Signals — Access" message; STOUP buttons are added to it in place, not a new message
+const EMIL_USER_ID = '1218191041178505257'; // owns the TV account the STOUP indicator is published under, grants invite-only access manually
+const STOUP_INDI_URL = 'https://www.tradingview.com/script/96JpwSId-STDV-Fib-Active-Anchor/'; // placeholder -- swap for the real invite-only STOUP indicator link
 
-// Adds the "Request STOUP Fib Settings" button as a second row on the
-// existing V4 access message, instead of posting a separate message.
-async function addStoupFibButtonToExisting(channel) {
+// Replaces the existing message's components entirely with the current
+// 2-row layout (V4 row + STOUP row with both Fib Settings and Indi
+// buttons) and a trimmed description -- used to add the STOUP Indi button
+// and shrink labels on the already-live message without creating a new one.
+async function syncV4AccessMessage(channel) {
   const msg = await channel.messages.fetch(V4_ACCESS_MSG_ID);
 
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('v4access_request').setLabel('V4 Access').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('v4access_webhook').setLabel('Setup Webhook').setStyle(ButtonStyle.Primary),
+  );
   const stoupRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('stoupfib_request').setLabel('Request STOUP Fib Settings').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('stoupfib_request').setLabel('Req Fib Settings').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('stoupindi_request').setLabel('Req STOUP Indi').setStyle(ButtonStyle.Success),
   );
 
-  await msg.edit({ components: [...msg.components, stoupRow] });
+  const embed = new EmbedBuilder()
+    .setColor(0x38bdf8)
+    .setTitle('V4 Signals — Access')
+    .setDescription(
+      `**V4 Access** — request access to V4 Signals, agree to terms, Founder approves.\n` +
+      `**Setup Webhook** — V4 holders only, push signals to your own app.\n` +
+      `**Req Fib Settings** — unlock the real STOUP Fib levels (Vol IV only).\n` +
+      `**Req STOUP Indi** — get your TradingView username added to the invite-only STOUP indicator (Vol IV only).`
+    )
+    .setFooter({ text: 'The Smart Money Paradigm  ·  V4 Signals' });
+
+  await msg.edit({ embeds: [embed], components: [row, stoupRow] });
 }
 
 // ── Handle interactions ──
@@ -4946,11 +4966,11 @@ client.on(Events.InteractionCreate, async interaction => {
       if (commandName === 'setup-stoupfib') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
-        await interaction.reply({ content: 'Adding STOUP Fib button to the access message...', ephemeral: true });
+        await interaction.reply({ content: 'Syncing the access message...', ephemeral: true });
         const ch = guild.channels.cache.get(V4_ACCESS_CH_ID);
         if (!ch) return interaction.editReply({ content: 'Access channel not found.' });
         try {
-          await addStoupFibButtonToExisting(ch);
+          await syncV4AccessMessage(ch);
           return interaction.editReply({ content: 'Done.' });
         } catch (e) {
           console.error('[setup-stoupfib] failed:', e.message);
@@ -5548,6 +5568,67 @@ client.on(Events.InteractionCreate, async interaction => {
           ),
         );
         return interaction.showModal(modal);
+      }
+
+      // ── STOUP Indicator: Request button (in #v4-signals-access) ──
+      // Opens the "TradingView username" modal; the thread itself is
+      // created once that modal is submitted (see stoupindi_tv_modal).
+      if (customId === 'stoupindi_request') {
+        const isVol4Click = interaction.member.roles.cache.has(VOLUME_ROLES['Vol IV'].id);
+        if (!isVol4Click) {
+          return interaction.reply({ content: "The STOUP indicator is for Vol IV members only.", ephemeral: true });
+        }
+
+        const existing = interaction.channel.threads.cache.find(
+          t => t.name === `stoupindi-${interaction.user.username}` && !t.archived
+        );
+        if (existing) return interaction.reply({ content: `You already have an open request: ${existing}`, ephemeral: true });
+
+        const modal = new ModalBuilder()
+          .setCustomId('stoupindi_tv_modal')
+          .setTitle('STOUP Indicator Access');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('stoupindi_tv_username')
+              .setLabel('Your TradingView username')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setPlaceholder('exact username, case-sensitive')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
+      // ── STOUP Indicator: Founder/Emil clicks Granted — invite-only access
+      // was added manually on TradingView's side, this just DMs the user
+      // the script link and closes the thread. ──
+      if (customId.startsWith('stoupindi_granted_')) {
+        await interaction.deferReply();
+
+        const isFounder = interaction.member.roles.cache.has(FOUNDER_ROLE_ID);
+        const isEmil = interaction.user.id === EMIL_USER_ID;
+        if (!isFounder && !isEmil) return interaction.editReply({ content: 'Only Founder or Emil can grant this.' });
+
+        const requesterId = customId.replace('stoupindi_granted_', '');
+        const targetMember = await interaction.guild.members.fetch(requesterId).catch(() => null);
+
+        try {
+          if (targetMember) {
+            await targetMember.send(
+              `✅ Your **STOUP Indicator** access was granted on TradingView.\n\n${STOUP_INDI_URL}\n\nKeep this confidential — do not share access outside the server.`
+            );
+          }
+        } catch (e) { /* DMs closed */ }
+
+        await interaction.editReply({ content: `✅ Granted by <@${interaction.user.id}>. Closing this thread.` });
+
+        setTimeout(async () => {
+          await _saveTicketTranscript(interaction.channel, `${interaction.user.tag} (granted STOUP indicator access for ${targetMember?.user.tag || requesterId})`);
+          await interaction.channel.setArchived(true).catch(() => {});
+          await interaction.channel.setLocked(true).catch(() => {});
+        }, 3000);
+        return;
       }
 
       // ── STOUP Fib Settings: "I Agree" — only after this does Founder get
@@ -6737,6 +6818,67 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       await thread.send({ content: `<@${interaction.user.id}> — name on file: **${realName}**`, embeds: [rulesEmbed], components: [agreeRow] });
+
+      return interaction.editReply({ content: `Your request has been opened: ${thread}` });
+    }
+
+    // ── STOUP Indicator: TV username modal submit — creates the thread,
+    // tags Founder role + Emil specifically (he owns the TV account the
+    // script is published under), posts the username, shows Granted. ──
+    if (interaction.isModalSubmit() && interaction.customId === 'stoupindi_tv_modal') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const tvUsername = interaction.fields.getTextInputValue('stoupindi_tv_username').trim();
+      const guild = interaction.guild;
+
+      const isVol4Requester = interaction.member.roles.cache.has(VOLUME_ROLES['Vol IV'].id);
+      if (!isVol4Requester) {
+        try {
+          await interaction.user.send(`The STOUP indicator is for **Vol IV** members only — you don't currently have that role, so a request thread wasn't opened.`);
+        } catch (e) { /* DMs closed */ }
+        return interaction.editReply({ content: "The STOUP indicator is for Vol IV members only. You don't have that role, so no thread was opened — check your DMs." });
+      }
+
+      const parentChannel = guild.channels.cache.get(V4_ACCESS_CH_ID);
+      if (!parentChannel) return interaction.editReply({ content: 'Could not find the access channel — contact staff.' });
+
+      const thread = await parentChannel.threads.create({
+        name: `stoupindi-${interaction.user.username}`,
+        autoArchiveDuration: 1440,
+        type: 12, // GUILD_PRIVATE_THREAD
+        invitable: false,
+        reason: `STOUP indicator access request from ${interaction.user.tag}`,
+      });
+
+      await thread.members.add(interaction.user.id);
+      await thread.members.add(EMIL_USER_ID).catch(() => {});
+      const allMembers = await guild.members.fetch();
+      for (const m of allMembers.values()) {
+        if (m.user.bot) continue;
+        if (m.roles.cache.has(FOUNDER_ROLE_ID)) {
+          await thread.members.add(m.id).catch(() => {});
+        }
+      }
+
+      const infoEmbed = new EmbedBuilder()
+        .setColor(0xa78bfa)
+        .setTitle('STOUP Indicator — Access Request')
+        .setDescription(
+          `**TradingView username:** ${tvUsername}\n\n` +
+          `<@${EMIL_USER_ID}> — add this username to the invite-only STOUP indicator on TradingView, ` +
+          `then click **Granted** below to notify the requester and close this thread.`
+        )
+        .setFooter({ text: 'The Smart Money Paradigm  ·  STOUP Indicator' });
+
+      const grantedRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`stoupindi_granted_${interaction.user.id}`).setLabel('Granted').setStyle(ButtonStyle.Success),
+      );
+
+      await thread.send({
+        content: `<@${interaction.user.id}> <@&${FOUNDER_ROLE_ID}> <@${EMIL_USER_ID}>`,
+        embeds: [infoEmbed],
+        components: [grantedRow],
+      });
 
       return interaction.editReply({ content: `Your request has been opened: ${thread}` });
     }
