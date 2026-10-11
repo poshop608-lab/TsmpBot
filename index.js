@@ -3349,6 +3349,9 @@ async function postV4AccessButtons(channel) {
     new ButtonBuilder().setCustomId('v4access_request').setLabel('Request V4 Signals Access').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('v4access_webhook').setLabel('Setup Webhook').setStyle(ButtonStyle.Primary),
   );
+  const stoupRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('stoupfib_request').setLabel('Request STOUP Fib Settings').setStyle(ButtonStyle.Success),
+  );
 
   const embed = new EmbedBuilder()
     .setColor(0x38bdf8)
@@ -3356,11 +3359,13 @@ async function postV4AccessButtons(channel) {
     .setDescription(
       `**Request V4 Signals Access** — opens a private thread. You'll be shown the rules/disclaimer, ` +
       `agree to them, then Founder reviews and approves. Once approved you're granted the V4 Signals role and the channel unlocks.\n\n` +
-      `**Setup Webhook** — V4 Signals holders only. Register a URL (Notialarm, ntfy.sh, Zapier, etc.) to get every V4 signal pushed to an app of your choice.`
+      `**Setup Webhook** — V4 Signals holders only. Register a URL (Notialarm, ntfy.sh, Zapier, etc.) to get every V4 signal pushed to an app of your choice.\n\n` +
+      `**Request STOUP Fib Settings** — opens a private thread. You'll confirm your name, agree to the risk disclosure & confidentiality terms, ` +
+      `then Founder reviews and approves. Once approved you'll be DM'd the fib levels to plug into the STOUP Fib indicator.`
     )
     .setFooter({ text: 'The Smart Money Paradigm  ·  V4 Signals' });
 
-  await channel.send({ embeds: [embed], components: [row] });
+  await channel.send({ embeds: [embed], components: [row, stoupRow] });
 }
 
 const V4_ACCESS_MSG_ID = '1554803144184037488'; // the live "V4 Signals — Access" message; STOUP button is added to it in place, not a new message
