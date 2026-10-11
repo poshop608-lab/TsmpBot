@@ -5456,6 +5456,11 @@ client.on(Events.InteractionCreate, async interaction => {
       // Opens the "confirm your name" modal first; the thread itself is
       // created once that modal is submitted (see stoupfib_name_modal).
       if (customId === 'stoupfib_request') {
+        const isVol4Click = interaction.member.roles.cache.has(VOLUME_ROLES['Vol IV'].id);
+        if (!isVol4Click) {
+          return interaction.reply({ content: "The STOUP Fib model is for Vol IV members only.", ephemeral: true });
+        }
+
         const existing = interaction.channel.threads.cache.find(
           t => t.name === `stoupfib-${interaction.user.username}` && !t.archived
         );
@@ -6613,6 +6618,16 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const realName = interaction.fields.getTextInputValue('stoupfib_realname').trim();
       const guild = interaction.guild;
+
+      // STOUP Fib is Vol IV only — no thread opens for anyone else, DM instead.
+      const isVol4Requester = interaction.member.roles.cache.has(VOLUME_ROLES['Vol IV'].id);
+      if (!isVol4Requester) {
+        try {
+          await interaction.user.send(`The STOUP Fib model is for **Vol IV** members only — you don't currently have that role, so a request thread wasn't opened.`);
+        } catch (e) { /* DMs closed */ }
+        return interaction.editReply({ content: "The STOUP Fib model is for Vol IV members only. You don't have that role, so no thread was opened — check your DMs." });
+      }
+
       const parentChannel = guild.channels.cache.get(V4_ACCESS_CH_ID);
       if (!parentChannel) return interaction.editReply({ content: 'Could not find the access channel — contact staff.' });
 
