@@ -1482,6 +1482,12 @@ function _escHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Discord embed field values cap at 1024 chars.
+function _truncField(s, max = 1000) {
+  if (!s) return s;
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
 async function _saveTicketTranscript(thread, closedBy) {
   try {
     const ticketsCh = thread.guild?.channels.cache.get(TICKETS_CH_ID);
@@ -1501,113 +1507,46 @@ async function _saveTicketTranscript(thread, closedBy) {
     }
     allMsgs.reverse(); // chronological order
 
-    // Renders each message as a chat-style block — content, embeds (title/
-    // description/fields), and attachments (images inlined, everything else
-    // as a link) — instead of the old flat .txt dump, so a transcript reads
-    // like the actual conversation when opened instead of a wall of text.
-    const msgBlocks = allMsgs.map(m => {
-      const ts = new Date(m.createdTimestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' });
-      const author = _escHtml(m.author.tag);
-      const authorId = m.author.id;
-      const isBot = m.author.bot;
-
-      let bodyHtml = '';
-      if (m.content) {
-        bodyHtml += `<div class="msg-text">${_escHtml(m.content).replace(/\n/g, '<br>')}</div>`;
-      }
-      for (const emb of m.embeds) {
-        const color = emb.color ? `#${emb.color.toString(16).padStart(6, '0')}` : '#38bdf8';
-        const title = emb.title ? `<div class="embed-title">${_escHtml(emb.title)}</div>` : '';
-        const desc = emb.description ? `<div class="embed-desc">${_escHtml(emb.description).replace(/\n/g, '<br>')}</div>` : '';
-        const fields = (emb.fields || []).map(f => `<div class="embed-field"><span class="ef-name">${_escHtml(f.name)}</span><span class="ef-val">${_escHtml(f.value)}</span></div>`).join('');
-        bodyHtml += `<div class="embed-block" style="border-left-color:${color}">${title}${desc}${fields ? `<div class="embed-fields">${fields}</div>` : ''}</div>`;
-      }
-      for (const att of m.attachments.values()) {
-        const isImg = /\.(png|jpe?g|gif|webp)$/i.test(att.name || '');
-        bodyHtml += isImg
-          ? `<div class="attach-block"><img src="${_escHtml(att.url)}" alt="${_escHtml(att.name || 'attachment')}" loading="lazy"></div>`
-          : `<div class="attach-block"><a href="${_escHtml(att.url)}" target="_blank" rel="noopener">📎 ${_escHtml(att.name || 'attachment')}</a></div>`;
-      }
-      if (m.components && m.components.length) {
-        const btns = m.components.flatMap(row => row.components || []).map(c => `<span class="btn-chip">${_escHtml(c.label || c.customId || 'button')}</span>`).join('');
-        if (btns) bodyHtml += `<div class="components-row">${btns}</div>`;
-      }
-
-      return `
-        <div class="msg ${isBot ? 'msg-bot' : ''}">
-          <div class="msg-head"><span class="msg-author">${author}</span><span class="msg-id">${authorId}</span><span class="msg-ts">${ts} ET</span></div>
-          ${bodyHtml || '<div class="msg-text msg-empty">(no content)</div>'}
-        </div>`;
-    }).join('\n');
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Transcript — ${_escHtml(thread.name)}</title>
-<style>
-  :root{--bg:#060509;--card:#0d0c14;--line:rgba(206,210,224,.1);--text:#eae6dc;--dim:#a49eab;--mute:#6a6472;--accent:#38bdf8}
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',Arial,sans-serif;font-size:15px;line-height:1.55;padding:32px 20px}
-  .wrap{max-width:820px;margin:0 auto}
-  .head{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:24px}
-  .head h1{font-size:20px;margin-bottom:10px}
-  .meta{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;color:var(--dim)}
-  .meta b{color:var(--text)}
-  .msg{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:14px 18px;margin-bottom:10px}
-  .msg-bot{border-color:rgba(56,189,248,.25)}
-  .msg-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap}
-  .msg-author{font-weight:700;font-size:14px}
-  .msg-id{font-size:11px;color:var(--mute);font-family:monospace}
-  .msg-ts{font-size:11.5px;color:var(--mute);margin-left:auto}
-  .msg-text{color:var(--dim);white-space:pre-wrap}
-  .msg-empty{color:var(--mute);font-style:italic}
-  .embed-block{border-left:3px solid var(--accent);padding:10px 14px;margin-top:8px;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0}
-  .embed-title{font-weight:700;margin-bottom:4px}
-  .embed-desc{color:var(--dim);font-size:14px;margin-bottom:6px}
-  .embed-fields{display:flex;flex-direction:column;gap:4px}
-  .embed-field{font-size:13px;color:var(--dim)}
-  .ef-name{font-weight:600;color:var(--text)}
-  .ef-name::after{content:": "}
-  .attach-block{margin-top:8px}
-  .attach-block img{max-width:100%;max-height:400px;border-radius:8px;border:1px solid var(--line)}
-  .attach-block a{color:var(--accent)}
-  .components-row{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
-  .btn-chip{font-size:11.5px;font-weight:600;border:1px solid var(--line);border-radius:100px;padding:4px 12px;color:var(--dim)}
-  .footer{text-align:center;color:var(--mute);font-size:12px;padding:24px 0 0}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="head">
-    <h1>📄 ${_escHtml(thread.name)}</h1>
-    <div class="meta">
-      <span>Closed by <b>${_escHtml(closedBy)}</b></span>
-      <span>Closed <b>${new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' })} ET</b></span>
-      <span><b>${allMsgs.length}</b> message${allMsgs.length === 1 ? '' : 's'}</span>
-    </div>
-  </div>
-  ${msgBlocks || '<p style="color:var(--mute)">No messages in this thread.</p>'}
-  <div class="footer">The Smart Money Paradigm · Ticket Transcript</div>
-</div>
-</body>
-</html>`;
-
-    const buf = Buffer.from(html, 'utf8');
-    const filename = `${thread.name}-${Date.now()}.html`;
-    const attachment = new AttachmentBuilder(buf, { name: filename });
-
-    const embed = new EmbedBuilder()
+    // Native Discord embeds instead of an .html attachment -- the old file
+    // needed a download + open-in-browser step that doesn't work well on
+    // mobile Discord. Embeds render inline on any device, no extra step.
+    const summaryEmbed = new EmbedBuilder()
       .setColor(0x374151)
-      .setTitle(`📄 Ticket Closed — ${thread.name}`)
+      .setTitle(`Ticket Closed — ${thread.name}`)
       .addFields(
         { name: 'Closed By', value: closedBy, inline: true },
         { name: 'Messages', value: String(allMsgs.length), inline: true },
         { name: 'Closed At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-      )
-      .setFooter({ text: 'Full transcript attached as .html — open in any browser' });
+      );
 
-    await ticketsCh.send({ embeds: [embed], files: [attachment] });
+    // One embed per message, 10 embeds max per Discord message, so send in
+    // batches of 10 (summary embed takes the first slot of the first batch).
+    const msgEmbeds = allMsgs.map(m => {
+      const ts = new Date(m.createdTimestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short' });
+      let body = m.content || '';
+      for (const emb of m.embeds) {
+        if (emb.title) body += `\n**${emb.title}**`;
+        if (emb.description) body += `\n${emb.description}`;
+        for (const f of emb.fields || []) body += `\n**${f.name}:** ${f.value}`;
+      }
+      for (const att of m.attachments.values()) {
+        body += `\n📎 [${att.name || 'attachment'}](${att.url})`;
+      }
+      if (m.components && m.components.length) {
+        const btns = m.components.flatMap(row => row.components || []).map(c => c.label || c.customId || 'button');
+        if (btns.length) body += `\n[buttons: ${btns.join(', ')}]`;
+      }
+      return new EmbedBuilder()
+        .setColor(m.author.bot ? 0x38bdf8 : 0x4b5563)
+        .setAuthor({ name: `${m.author.tag} (${m.author.id})` })
+        .setDescription(_truncField(body.trim() || '(no content)', 4000))
+        .setFooter({ text: `${ts} ET` });
+    });
+
+    const allEmbeds = [summaryEmbed, ...msgEmbeds];
+    for (let i = 0; i < allEmbeds.length; i += 10) {
+      await ticketsCh.send({ embeds: allEmbeds.slice(i, i + 10) });
+    }
   } catch (e) {
     console.warn('[ticket transcript] failed:', e.message);
   }
