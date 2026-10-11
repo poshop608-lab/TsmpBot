@@ -3363,22 +3363,18 @@ async function postV4AccessButtons(channel) {
   await channel.send({ embeds: [embed], components: [row] });
 }
 
-async function postStoupFibButton(channel) {
+const V4_ACCESS_MSG_ID = '1554803144184037488'; // the live "V4 Signals — Access" message; STOUP button is added to it in place, not a new message
+
+// Adds the "Request STOUP Fib Settings" button as a second row on the
+// existing V4 access message, instead of posting a separate message.
+async function addStoupFibButtonToExisting(channel) {
+  const msg = await channel.messages.fetch(V4_ACCESS_MSG_ID);
+
   const stoupRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('stoupfib_request').setLabel('Request STOUP Fib Settings').setStyle(ButtonStyle.Success),
   );
 
-  const stoupEmbed = new EmbedBuilder()
-    .setColor(0xa78bfa)
-    .setTitle('STOUP Fib Indicator — Settings')
-    .setDescription(
-      `**Request STOUP Fib Settings** — opens a private thread. You'll confirm your name, agree to the ` +
-      `risk disclosure & confidentiality terms, then Founder reviews and approves. Once approved you'll be ` +
-      `DM'd the fib levels to plug into the indicator.`
-    )
-    .setFooter({ text: 'The Smart Money Paradigm  ·  STOUP Fib' });
-
-  await channel.send({ embeds: [stoupEmbed], components: [stoupRow] });
+  await msg.edit({ components: [...msg.components, stoupRow] });
 }
 
 // ── Handle interactions ──
@@ -4938,10 +4934,16 @@ client.on(Events.InteractionCreate, async interaction => {
       if (commandName === 'setup-stoupfib') {
         const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
         if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
-        await interaction.reply({ content: 'Posting STOUP Fib request button...', ephemeral: true });
+        await interaction.reply({ content: 'Adding STOUP Fib button to the access message...', ephemeral: true });
         const ch = guild.channels.cache.get(V4_ACCESS_CH_ID);
-        if (ch) await postStoupFibButton(ch);
-        return interaction.editReply({ content: 'Done.' });
+        if (!ch) return interaction.editReply({ content: 'Access channel not found.' });
+        try {
+          await addStoupFibButtonToExisting(ch);
+          return interaction.editReply({ content: 'Done.' });
+        } catch (e) {
+          console.error('[setup-stoupfib] failed:', e.message);
+          return interaction.editReply({ content: `Failed: ${e.message}` });
+        }
       }
 
       if (commandName === 'reset-journal-stats') {
