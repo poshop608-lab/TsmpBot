@@ -444,6 +444,10 @@ const commands = [
     .setDescription('Post the Request Access / Setup Webhook buttons in v4-signals-access (staff only)'),
 
   new SlashCommandBuilder()
+    .setName('setup-stoupfib')
+    .setDescription('Post the Request STOUP Fib Settings button in v4-signals-access (staff only)'),
+
+  new SlashCommandBuilder()
     .setName('reset-journal-stats')
     .setDescription('Permanently delete a user\'s trade journal history (Founder only)')
     .addUserOption(opt =>

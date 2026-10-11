@@ -3363,6 +3363,24 @@ async function postV4AccessButtons(channel) {
   await channel.send({ embeds: [embed], components: [row] });
 }
 
+async function postStoupFibButton(channel) {
+  const stoupRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('stoupfib_request').setLabel('Request STOUP Fib Settings').setStyle(ButtonStyle.Success),
+  );
+
+  const stoupEmbed = new EmbedBuilder()
+    .setColor(0xa78bfa)
+    .setTitle('STOUP Fib Indicator — Settings')
+    .setDescription(
+      `**Request STOUP Fib Settings** — opens a private thread. You'll confirm your name, agree to the ` +
+      `risk disclosure & confidentiality terms, then Founder reviews and approves. Once approved you'll be ` +
+      `DM'd the fib levels to plug into the indicator.`
+    )
+    .setFooter({ text: 'The Smart Money Paradigm  ·  STOUP Fib' });
+
+  await channel.send({ embeds: [stoupEmbed], components: [stoupRow] });
+}
+
 // ── Handle interactions ──
 client.on(Events.InteractionCreate, async interaction => {
   try {
@@ -4917,6 +4935,15 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({ content: 'Done.' });
       }
 
+      if (commandName === 'setup-stoupfib') {
+        const isStaff = STAFF_ROLE_IDS.some(id => interaction.member.roles.cache.has(id));
+        if (!isStaff) return interaction.reply({ content: 'No permission.', ephemeral: true });
+        await interaction.reply({ content: 'Posting STOUP Fib request button...', ephemeral: true });
+        const ch = guild.channels.cache.get(V4_ACCESS_CH_ID);
+        if (ch) await postStoupFibButton(ch);
+        return interaction.editReply({ content: 'Done.' });
+      }
+
       if (commandName === 'reset-journal-stats') {
         const isFounder = interaction.member.roles.cache.has('1469222592312377374'); // Founder role
         if (!isFounder) return interaction.reply({ content: 'Only the Founder can reset a trade journal.', ephemeral: true });
@@ -5477,6 +5504,91 @@ client.on(Events.InteractionCreate, async interaction => {
           ),
         );
         return interaction.showModal(modal);
+      }
+
+      // ── STOUP Fib Settings: Request button (in #v4-signals-access) ──
+      // Opens the "confirm your name" modal first; the thread itself is
+      // created once that modal is submitted (see stoupfib_name_modal).
+      if (customId === 'stoupfib_request') {
+        const existing = interaction.channel.threads.cache.find(
+          t => t.name === `stoupfib-${interaction.user.username}` && !t.archived
+        );
+        if (existing) return interaction.reply({ content: `You already have an open request: ${existing}`, ephemeral: true });
+
+        const modal = new ModalBuilder()
+          .setCustomId('stoupfib_name_modal')
+          .setTitle('STOUP Fib Settings Request');
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('stoupfib_realname')
+              .setLabel('Your full name')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+              .setPlaceholder('First Last')
+          ),
+        );
+        return interaction.showModal(modal);
+      }
+
+      // ── STOUP Fib Settings: "I Agree" — only after this does Founder get
+      // Approve/Decline. Requester-only (checked against the id baked into
+      // the customId), so nobody can agree on someone else's behalf. ──
+      if (customId.startsWith('stoupfib_agree_')) {
+        const requesterId = customId.replace('stoupfib_agree_', '');
+        if (interaction.user.id !== requesterId) {
+          return interaction.reply({ content: 'Only the person who requested this can agree to the terms.', ephemeral: true });
+        }
+
+        await interaction.update({ components: [] }); // remove the Agree button, keep the terms embed visible
+
+        const approveRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`stoupfib_approve_${requesterId}`).setLabel('Approve').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`stoupfib_decline_${requesterId}`).setLabel('Decline').setStyle(ButtonStyle.Danger),
+        );
+
+        await interaction.channel.send({
+          content: `<@${requesterId}> agreed to the terms. <@&${FOUNDER_ROLE_ID}> — review and approve or decline.`,
+          components: [approveRow],
+        });
+        return;
+      }
+
+      // ── STOUP Fib Settings: Founder Approve/Decline — DMs the requester
+      // the fib levels (approve) or a decline notice, thread closes either
+      // way. Transcript saved for audit before archiving. ──
+      if (customId.startsWith('stoupfib_approve_') || customId.startsWith('stoupfib_decline_')) {
+        await interaction.deferReply();
+
+        const isFounder = interaction.member.roles.cache.has(FOUNDER_ROLE_ID);
+        if (!isFounder) return interaction.editReply({ content: 'Only Founder can resolve this.' });
+
+        const approve = customId.startsWith('stoupfib_approve_');
+        const requesterId = customId.replace(approve ? 'stoupfib_approve_' : 'stoupfib_decline_', '');
+        const targetMember = await interaction.guild.members.fetch(requesterId).catch(() => null);
+
+        try {
+          if (targetMember) {
+            await targetMember.send(
+              approve
+                ? `✅ Your **STOUP Fib Settings** request was approved.\n\n**Level 1:** 1.272\n**Level 2:** 1.3414\n\nPlug these into the indicator's Fib Levels group. Keep these confidential — do not share them outside the server or with other members.`
+                : `Your **STOUP Fib Settings** request was declined.`
+            );
+          }
+        } catch (e) { /* DMs closed */ }
+
+        await interaction.editReply({
+          content: approve
+            ? `✅ Approved by <@${interaction.user.id}>. Closing this thread.`
+            : `Declined by <@${interaction.user.id}>. Closing this thread.`,
+        });
+
+        setTimeout(async () => {
+          await _saveTicketTranscript(interaction.channel, `${interaction.user.tag} (${approve ? 'approved' : 'declined'} STOUP Fib settings for ${targetMember?.user.tag || requesterId})`);
+          await interaction.channel.setArchived(true).catch(() => {});
+          await interaction.channel.setLocked(true).catch(() => {});
+        }, 3000);
+        return;
       }
 
       if (customId.startsWith('assign_vol')) {
@@ -6545,6 +6657,59 @@ client.on(Events.InteractionCreate, async interaction => {
         console.error('[v4access webhook] save failed:', e.message);
         return interaction.editReply({ content: 'Something went wrong saving your webhook — try again shortly.' });
       }
+    }
+
+    // ── STOUP Fib Settings: name modal submit — creates the private thread,
+    // posts the confirmed name + risk disclosure/confidentiality terms, and
+    // the "I Agree" button. Founder only gets Approve/Decline after that. ──
+    if (interaction.isModalSubmit() && interaction.customId === 'stoupfib_name_modal') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const realName = interaction.fields.getTextInputValue('stoupfib_realname').trim();
+      const guild = interaction.guild;
+      const parentChannel = guild.channels.cache.get(V4_ACCESS_CH_ID);
+      if (!parentChannel) return interaction.editReply({ content: 'Could not find the access channel — contact staff.' });
+
+      const thread = await parentChannel.threads.create({
+        name: `stoupfib-${interaction.user.username}`,
+        autoArchiveDuration: 1440,
+        type: 12, // GUILD_PRIVATE_THREAD
+        invitable: false,
+        reason: `STOUP Fib settings request from ${interaction.user.tag}`,
+      });
+
+      await thread.members.add(interaction.user.id);
+      const allMembers = await guild.members.fetch();
+      for (const m of allMembers.values()) {
+        if (m.user.bot) continue;
+        if (m.roles.cache.has(FOUNDER_ROLE_ID)) {
+          await thread.members.add(m.id).catch(() => {});
+        }
+      }
+
+      const rulesEmbed = new EmbedBuilder()
+        .setColor(0xf87171)
+        .setTitle('STOUP Fib Settings — Risk Disclosure & Confidentiality')
+        .setDescription(
+          `**Name submitted:** ${realName}\n\n` +
+          `**You trade at your own risk. Nothing shared here is financial advice.** The STOUP fib indicator ` +
+          `is a discretionary tool, not a guaranteed-win system — past results never guarantee future outcomes.\n\n` +
+          `**You are solely responsible for every trade you place** using these settings. The Smart Money ` +
+          `Paradigm, its Founder, and its staff carry no liability for losses incurred from acting on them.\n\n` +
+          `**Confidentiality — do not share these settings outside this server, and do not share them with ` +
+          `anyone else even inside the server.** These settings are tied to your account. Sharing them can ` +
+          `result in access being revoked.\n\n` +
+          `Click **I Agree** below to confirm you understand and accept this before your request can be reviewed.`
+        )
+        .setFooter({ text: 'The Smart Money Paradigm  ·  STOUP Fib' });
+
+      const agreeRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`stoupfib_agree_${interaction.user.id}`).setLabel('I Agree').setStyle(ButtonStyle.Success),
+      );
+
+      await thread.send({ content: `<@${interaction.user.id}> — name on file: **${realName}**`, embeds: [rulesEmbed], components: [agreeRow] });
+
+      return interaction.editReply({ content: `Your request has been opened: ${thread}` });
     }
 
     // ── Modal submit — drop a signal ──
