@@ -3235,11 +3235,15 @@ async function pollNdaSigned() {
         agreedAt: rec.agreedAt,
       });
 
+      const safeName = String(rec.fullName || rec.discordUsername || 'member')
+        .replace(/[^a-zA-Z0-9 _-]/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'member';
+      const fileName = `TSMP-NDA-signed-${safeName}.pdf`;
+
       let dmFailed = false;
       try {
         await member.send({
           content: 'Your signed TSMP confidentiality agreement — keep this for your records.',
-          files: [{ attachment: Buffer.from(pdfBytes), name: 'TSMP-NDA-signed.pdf' }],
+          files: [{ attachment: Buffer.from(pdfBytes), name: fileName }],
         });
       } catch (dmErr) {
         dmFailed = true; // DMs closed, etc — still mark processed so this doesn't retry forever
