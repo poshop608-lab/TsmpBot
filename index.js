@@ -6714,11 +6714,18 @@ client.on(Events.InteractionCreate, async interaction => {
       const v4Row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`assign_vol_v4signal_${member.user.id}`).setLabel('V4 Signals').setStyle(ButtonStyle.Success),
       );
+      // Link button (style Link), not a custom_id — opens the OAuth-gated NDA
+      // signing page directly, same endpoint the website's /join flow uses
+      // (worker's /sign-nda -> /callback -> nda.html). No bot interaction
+      // handler needed for the click itself.
+      const ndaRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setLabel('Sign NDA').setStyle(ButtonStyle.Link).setURL('https://smp-join.poshop608.workers.dev/sign-nda'),
+      );
 
       await thread.send({
         content: `<@&${STAFF_ROLE_IDS[0]}> <@&${STAFF_ROLE_IDS[1]}> — new access application from <@${member.user.id}>`,
         embeds: [intakeEmbed],
-        components: [volRow, v4Row],
+        components: [volRow, v4Row, ndaRow],
       });
 
       return interaction.editReply({ content: `Your application has been submitted. Staff will review it shortly.` });
