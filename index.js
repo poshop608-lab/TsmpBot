@@ -1629,11 +1629,14 @@ const VOLUME_ROLES = {
 
 // Vol tiers stack: granting Vol N also grants every tier below it, so a
 // member always holds the full bundle up to their highest Vol instead of
-// just the single role that was clicked.
+// just the single role that was clicked. Vol IV also bundles V4Signal —
+// that tier is meant to include signal access, not a separate request.
 function cumulativeVolRoleIds(volKey) {
   const order = ['Vol I', 'Vol II', 'Vol III', 'Vol IV'];
   const idx = order.indexOf(volKey);
-  return order.slice(0, idx + 1).map(k => VOLUME_ROLES[k].id);
+  const ids = order.slice(0, idx + 1).map(k => VOLUME_ROLES[k].id);
+  if (volKey === 'Vol IV') ids.push(V4SIGNAL_ROLE_ID);
+  return ids;
 }
 
 // Highest Vol tier a member currently holds, or null if none.
