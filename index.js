@@ -5877,37 +5877,48 @@ client.on(Events.InteractionCreate, async interaction => {
         const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
         if (!targetMember) return interaction.editReply({ content: 'Member not found.' });
 
+        const isUpgrade = interaction.channel.name?.startsWith('upgrade-');
+
         await targetMember.roles.remove(PENDING_ROLE_ID).catch(() => {});
         for (const roleId of roleIds) await targetMember.roles.add(roleId);
         await targetMember.roles.add(MENTEE_ROLE_ID);
 
         await interaction.channel.send(
-          `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>. Welcome.`
+          `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>.${isUpgrade ? '' : ' Welcome.'}`
         );
 
-        try {
-          const generalCh = guild.channels.cache.get(GENERAL_CH_ID);
-          if (generalCh) await generalCh.send(`@everyone Welcome In Our New Member <@${targetUserId}>`);
-        } catch (e) { console.warn('General welcome announce error:', e.message); }
+        if (isUpgrade) {
+          // Upgrade, not a new signup — announce the level-up instead of the
+          // new-member welcome flow below.
+          try {
+            const generalCh = guild.channels.cache.get(GENERAL_CH_ID);
+            if (generalCh) await generalCh.send(`🔥 ${targetMember.user.username} just leveled up to ${volKey}`);
+          } catch (e) { console.warn('Upgrade announce error:', e.message); }
+        } else {
+          try {
+            const generalCh = guild.channels.cache.get(GENERAL_CH_ID);
+            if (generalCh) await generalCh.send(`@everyone Welcome In Our New Member <@${targetUserId}>`);
+          } catch (e) { console.warn('General welcome announce error:', e.message); }
 
-        // Post welcome card now that member is approved
-        try {
-          const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
-          if (welcomeCh) {
-            const cardBuffer = await buildWelcomeCard(targetMember, guild.memberCount);
-            const attachment = new AttachmentBuilder(cardBuffer, { name: 'welcome.png' });
-            const welcomeEmbed = new EmbedBuilder()
-              .setColor(0x0a0a0a)
-              .setDescription(
-                `## Congrats, <@${targetUserId}> 🎉\n\n` +
-                `You're officially part of the mentorship. **${volKey}** access granted.\n\n` +
-                `The market is engineered — now you learn the engineering.`
-              )
-              .setImage('attachment://welcome.png')
-              .setFooter({ text: 'The Smart Money Paradigm  ·  Welcome to the family.' });
-            await welcomeCh.send({ embeds: [welcomeEmbed], files: [attachment] });
-          }
-        } catch (e) { console.warn('Welcome card error:', e.message); }
+          // Post welcome card now that member is approved
+          try {
+            const welcomeCh = guild.channels.cache.get(WELCOME_CH_ID);
+            if (welcomeCh) {
+              const cardBuffer = await buildWelcomeCard(targetMember, guild.memberCount);
+              const attachment = new AttachmentBuilder(cardBuffer, { name: 'welcome.png' });
+              const welcomeEmbed = new EmbedBuilder()
+                .setColor(0x0a0a0a)
+                .setDescription(
+                  `## Congrats, <@${targetUserId}> 🎉\n\n` +
+                  `You're officially part of the mentorship. **${volKey}** access granted.\n\n` +
+                  `The market is engineered — now you learn the engineering.`
+                )
+                .setImage('attachment://welcome.png')
+                .setFooter({ text: 'The Smart Money Paradigm  ·  Welcome to the family.' });
+              await welcomeCh.send({ embeds: [welcomeEmbed], files: [attachment] });
+            }
+          } catch (e) { console.warn('Welcome card error:', e.message); }
+        }
 
         await interaction.editReply({ content: `Done. ${volKey} assigned.` });
         setTimeout(async () => {
