@@ -1636,6 +1636,12 @@ function cumulativeVolRoleIds(volKey) {
   return order.slice(0, idx + 1).map(k => VOLUME_ROLES[k].id);
 }
 
+// Highest Vol tier a member currently holds, or null if none.
+function highestVolTier(member) {
+  const order = ['Vol IV', 'Vol III', 'Vol II', 'Vol I'];
+  return order.find(k => member.roles.cache.has(VOLUME_ROLES[k].id)) || null;
+}
+
 const STAFF_ROLE_IDS = [
   '1469222592312377374', // ⌬ Founder
   '1510299206990958865', // ⬡ Moderator
@@ -3320,6 +3326,10 @@ async function postAccessButton(channel) {
     new ButtonBuilder()
       .setCustomId('open_ticket')
       .setLabel('Request Access')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('open_upgrade_ticket')
+      .setLabel('Upgrade Role')
       .setStyle(ButtonStyle.Secondary),
   );
 
@@ -5377,6 +5387,95 @@ client.on(Events.InteractionCreate, async interaction => {
         );
 
         return interaction.showModal(modal);
+      }
+
+      // ── Open upgrade ticket — existing Vol holder wants a higher tier ──
+      if (customId === 'open_upgrade_ticket') {
+        await interaction.deferReply({ ephemeral: true });
+
+        const currentTier = highestVolTier(member);
+        if (!currentTier) return interaction.editReply({ content: 'You don\'t have a role yet — use **Request Access** instead.' });
+
+        const rolesCh = guild.channels.cache.get(ROLES_CH_ID);
+        if (!rolesCh) return interaction.editReply({ content: 'Roles channel not found. Contact staff.' });
+
+        const threadName = `upgrade-${member.user.username}`;
+        const existing = rolesCh.threads.cache.find(t => t.name === threadName && !t.archived);
+        if (existing) return interaction.editReply({ content: `You already have an open upgrade ticket: ${existing}` });
+
+        const thread = await rolesCh.threads.create({
+          name: threadName,
+          autoArchiveDuration: 10080,
+          type: 12, // GUILD_PRIVATE_THREAD
+          invitable: false,
+          reason: `Role upgrade request from ${member.user.tag}`,
+        });
+
+        await thread.members.add(member.user.id);
+        const allMembers = await guild.members.fetch();
+        for (const m of allMembers.values()) {
+          if (m.user.bot) continue;
+          if (STAFF_ROLE_IDS.some(id => m.roles.cache.has(id))) {
+            await thread.members.add(m.id).catch(() => {});
+          }
+        }
+
+        // Tier buttons — only tiers above the member's current one make sense.
+        const tierOrder = ['Vol I', 'Vol II', 'Vol III', 'Vol IV'];
+        const currentIdx = tierOrder.indexOf(currentTier);
+        const upgradeKeyMap = { 'Vol I': 'vol1', 'Vol II': 'vol2', 'Vol III': 'vol3', 'Vol IV': 'vol4' };
+        const tierButtons = tierOrder
+          .slice(currentIdx + 1)
+          .map(tier => new ButtonBuilder()
+            .setCustomId(`assign_vol_${upgradeKeyMap[tier]}_${member.user.id}`)
+            .setLabel(tier)
+            .setStyle(VOLUME_ROLES[tier].style));
+
+        const rows = [];
+        if (tierButtons.length) rows.push(new ActionRowBuilder().addComponents(...tierButtons));
+        rows.push(new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`close_ticket_${member.user.id}`).setLabel('Close').setStyle(ButtonStyle.Danger),
+        ));
+
+        const upgradeEmbed = new EmbedBuilder()
+          .setColor(0x2b2d31)
+          .setTitle(`⬆️ Role Upgrade Request — ${member.user.username}`)
+          .setDescription(
+            tierButtons.length
+              ? `**${member.user.username}** wants to upgrade their role from **${currentTier}** to a higher tier.`
+              : `**${member.user.username}** is already on the highest tier (**${currentTier}**) — no upgrade available.`
+          )
+          .setFooter({ text: `User ID: ${member.user.id}` })
+          .setTimestamp();
+
+        await thread.send({
+          content: `<@&${STAFF_ROLE_IDS[0]}> <@&${STAFF_ROLE_IDS[1]}> — role upgrade request from <@${member.user.id}> (currently ${currentTier})`,
+          embeds: [upgradeEmbed],
+          components: rows,
+        });
+
+        // NDA check — tell them to sign if they haven't, or confirm if they have.
+        try {
+          const ndaRes = await fetch('https://smp-join.poshop608.workers.dev/bot/nda/check', {
+            method: 'POST',
+            headers: { Authorization: `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ discordId: member.user.id }),
+          });
+          const ndaData = await ndaRes.json().catch(() => ({ ok: false }));
+          if (ndaData.ok && ndaData.signed) {
+            await thread.send({ embeds: [{ description: `✅ The NDA is already signed by <@${member.user.id}>.`, color: 0x4ade80 }] });
+          } else {
+            const ndaRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setLabel('Sign NDA').setStyle(ButtonStyle.Link).setURL('https://smartmoneysequence.com/sign-nda'),
+            );
+            await thread.send({
+              embeds: [{ description: `⚠️ <@${member.user.id}> hasn't signed the NDA yet. Please sign before this upgrade is approved.`, color: 0xf59e0b }],
+              components: [ndaRow],
+            });
+          }
+        } catch (e) { console.warn('NDA check error (upgrade ticket):', e.message); }
+
+        return interaction.editReply({ content: `Your upgrade ticket is open: ${thread}` });
       }
 
       // ── Assign volume role ──
