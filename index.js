@@ -3201,6 +3201,64 @@ const SOURCE_COLORS = {
   'CNBC Economy':     0x005594,
 };
 
+const { buildNdaPdf } = require('./nda_pdf_template.js');
+
+// Every newly-signed NDA gets a PDF copy of the exact agreement (clauses,
+// name, signature, timestamp) DMed to the signer. The worker has no way to
+// reach this bot's Railway host directly, so this pulls unprocessed records
+// instead of being pushed to.
+async function pollNdaSigned() {
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+
+  let records;
+  try {
+    const res = await fetch('https://smp-join.poshop608.workers.dev/bot/nda/unprocessed', {
+      method: 'POST',
+      headers: { Authorization: `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+    if (!data.ok) return;
+    records = data.records;
+  } catch (e) { console.warn('NDA poll fetch error:', e.message); return; }
+
+  for (const rec of records) {
+    try {
+      const member = await guild.members.fetch(rec.discordId).catch(() => null);
+      if (!member) continue; // left the server — nothing to DM
+
+      const pdfBytes = await buildNdaPdf({
+        fullName: rec.fullName,
+        discordUsername: rec.discordUsername,
+        discordId: rec.discordId,
+        signatureDataUrl: rec.signatureDataUrl,
+        agreedAt: rec.agreedAt,
+      });
+
+      let dmFailed = false;
+      try {
+        await member.send({
+          content: 'Your signed TSMP confidentiality agreement — keep this for your records.',
+          files: [{ attachment: Buffer.from(pdfBytes), name: 'TSMP-NDA-signed.pdf' }],
+        });
+      } catch (dmErr) {
+        dmFailed = true; // DMs closed, etc — still mark processed so this doesn't retry forever
+        console.warn(`NDA PDF DM failed for ${rec.discordId} (DMs likely closed):`, dmErr.message);
+      }
+
+      await fetch('https://smp-join.poshop608.workers.dev/bot/nda/mark-sent', {
+        method: 'POST',
+        headers: { Authorization: `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discordId: rec.discordId }),
+      });
+      if (!dmFailed) console.log(`NDA PDF sent to ${rec.discordUsername} (${rec.discordId})`);
+    } catch (e) {
+      console.warn(`NDA PDF generation failed for ${rec.discordId}:`, e.message);
+      // Not marked sent on a generation failure — worth retrying, unlike a closed-DM case.
+    }
+  }
+}
+
 async function pollMacroNews() {
   const guild = client.guilds.cache.first();
   if (!guild) return;
@@ -7486,6 +7544,17 @@ client.once(Events.ClientReady, () => {
     }, MACRO_POLL_MS);
   }, 10000);
   console.log('Macro news poller started (every 5 min)');
+
+  // NDA signed-copy PDF poller — no inbound webhook into this Railway host
+  // exists, so pull newly-signed records from the worker every 60s instead
+  // of the worker pushing to us.
+  setTimeout(() => {
+    pollNdaSigned().catch(e => console.error('NDA poll err:', e.message));
+    setInterval(() => {
+      pollNdaSigned().catch(e => console.error('NDA poll err:', e.message));
+    }, 60 * 1000);
+  }, 10000);
+  console.log('NDA signed-copy poller started (every 60s)');
 
 });
 

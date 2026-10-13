@@ -15,6 +15,7 @@
     "express": "^5.2.1",
     "fast-xml-parser": "^5.8.0",
     "gif-encoder-2": "^1.0.5",
+    "pdf-lib": "^1.17.1",
     "playwright": "^1.46.0"
   }
 }
