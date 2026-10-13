@@ -1627,6 +1627,15 @@ const VOLUME_ROLES = {
   'Vol IV':  { id: '1538202902294823024', style: ButtonStyle.Secondary },
 };
 
+// Vol tiers stack: granting Vol N also grants every tier below it, so a
+// member always holds the full bundle up to their highest Vol instead of
+// just the single role that was clicked.
+function cumulativeVolRoleIds(volKey) {
+  const order = ['Vol I', 'Vol II', 'Vol III', 'Vol IV'];
+  const idx = order.indexOf(volKey);
+  return order.slice(0, idx + 1).map(k => VOLUME_ROLES[k].id);
+}
+
 const STAFF_ROLE_IDS = [
   '1469222592312377374', // ⌬ Founder
   '1510299206990958865', // ⬡ Moderator
@@ -5702,13 +5711,13 @@ client.on(Events.InteractionCreate, async interaction => {
         const assignVolKeyMap = { vol1: 'Vol I', vol2: 'Vol II', vol3: 'Vol III', vol4: 'Vol IV' };
         const volKey = assignVolKeyMap[parts[2]] || 'Vol III';
         const targetUserId = parts[3];
-        const roleId = VOLUME_ROLES[volKey].id;
+        const roleIds = cumulativeVolRoleIds(volKey);
 
         const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
         if (!targetMember) return interaction.editReply({ content: 'Member not found.' });
 
         await targetMember.roles.remove(PENDING_ROLE_ID).catch(() => {});
-        await targetMember.roles.add(roleId);
+        for (const roleId of roleIds) await targetMember.roles.add(roleId);
         await targetMember.roles.add(MENTEE_ROLE_ID);
 
         await interaction.channel.send(
@@ -5767,17 +5776,17 @@ client.on(Events.InteractionCreate, async interaction => {
         const tierKey = customId.replace('grant_', ''); // v1/v2/v3/v4
         const volKeyMap = { v1: 'Vol I', v2: 'Vol II', v3: 'Vol III', v4: 'Vol IV' };
         const volKey = volKeyMap[tierKey];
-        const roleId = VOLUME_ROLES[volKey]?.id;
+        const roleIds = volKey ? cumulativeVolRoleIds(volKey) : [];
 
         const targetMember = await guild.members.fetch(targetUserId).catch(() => null);
         if (!targetMember) return interaction.editReply({ content: 'Member not found.' });
 
         await targetMember.roles.remove(PENDING_ROLE_ID).catch(() => {});
-        if (roleId) await targetMember.roles.add(roleId);
+        for (const roleId of roleIds) await targetMember.roles.add(roleId);
         await targetMember.roles.add(MENTEE_ROLE_ID);
 
         await interaction.channel.send(
-          `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>.${roleId ? '' : ' (Vol IV role not yet created — Mentee only.)'} Welcome.`
+          `✅ <@${targetUserId}> assigned **${volKey}** by <@${interaction.user.id}>. Welcome.`
         );
 
         try {
