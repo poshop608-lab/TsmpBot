@@ -6719,7 +6719,7 @@ client.on(Events.InteractionCreate, async interaction => {
       // (worker's /sign-nda -> /callback -> nda.html). No bot interaction
       // handler needed for the click itself.
       const ndaRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel('Sign NDA').setStyle(ButtonStyle.Link).setURL('https://smp-join.poshop608.workers.dev/sign-nda'),
+        new ButtonBuilder().setLabel('Sign NDA').setStyle(ButtonStyle.Link).setURL('https://smartmoneysequence.com/sign-nda'),
       );
 
       await thread.send({
