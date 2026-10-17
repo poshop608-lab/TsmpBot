@@ -1951,6 +1951,37 @@ const streamWeeklyJoins = new Map(); // userId -> { weekKey: string, count: numb
 let activeStream = null; // { vcId, vcName, messageId, hostId, startedAt, requiredTier, clickedUserIds: Set<string>, vcTimes: Map<userId, { joinedAt, totalMs }> } — null when no stream is live
 const streamHistory = []; // completed (ended, not cancelled) streams: { vcName, hostId, startedAt, endedAt, requiredTier, attendance: [{ userId, ms }] }
 
+// activeStream was purely in-memory — a Railway restart mid-stream left the
+// announcement message permanently stuck showing "Live Stream Starting" with
+// a working Join VC button, since nothing survived to let End Stream
+// recognize it (it compares against activeStream.messageId, which was just
+// null after restart). This mirrors the existing VC-countdown save/load
+// pattern so a restart can resume tracking instead of silently losing it.
+const STREAM_STATE_FILE = path.join(__dirname, 'data', 'active_stream.json');
+function _streamSave() {
+  if (!activeStream) {
+    try { fs.unlinkSync(STREAM_STATE_FILE); } catch (_) {}
+    return;
+  }
+  const { vcId, vcName, messageId, hostId, startedAt, requiredTier, allow1on1, clickedUserIds, vcTimes } = activeStream;
+  fs.writeFileSync(STREAM_STATE_FILE, JSON.stringify({
+    vcId, vcName, messageId, hostId, startedAt, requiredTier, allow1on1,
+    clickedUserIds: [...clickedUserIds],
+    vcTimes: [...vcTimes.entries()],
+  }));
+}
+function _streamLoad() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STREAM_STATE_FILE, 'utf8'));
+    return {
+      ...raw,
+      startedAt: new Date(raw.startedAt),
+      clickedUserIds: new Set(raw.clickedUserIds),
+      vcTimes: new Map(raw.vcTimes),
+    };
+  } catch (_) { return null; }
+}
+
 function _fmtEt(date) {
   return date.toLocaleString('en-US', {
     timeZone: 'America/New_York',
@@ -4436,6 +4467,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!msg) return interaction.editReply({ content: 'Could not post the stream announcement.' });
 
         activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, allow1on1, clickedUserIds: new Set(), vcTimes: new Map() };
+        _streamSave();
         return interaction.editReply({ content: `✅ Stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(requiredTier)}${requiredTier !== '1-on-1' ? (allow1on1 ? ' (1-on-1 can also join)' : ' (1-on-1 excluded)') : ''}, tracking joins for <#${vc.id}>.` });
       }
 
@@ -4468,7 +4500,7 @@ client.on(Events.InteractionCreate, async interaction => {
           await m.voice.disconnect('Stream tracker restarted after bot restart').catch(() => {});
         }
 
-        if (activeStream) activeStream = null;
+        if (activeStream) { activeStream = null; _streamSave(); }
 
         const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
         if (!ch) return interaction.editReply({ content: `Kicked ${membersToKick.length} (DMed ${dmCount}), but stream announcement channel not found — start tracking manually with /host-stream.` });
@@ -4489,6 +4521,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const vcTimes = new Map(membersToKick.map(m => [m.id, { joinedAt: null, totalMs: 10 * 60 * 1000 }]));
 
         activeStream = { vcId: vc.id, vcName: vc.name, messageId: msg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier, allow1on1, clickedUserIds: new Set(), vcTimes };
+        _streamSave();
         return interaction.editReply({ content: `✅ Kicked ${membersToKick.length} from <#${vc.id}> (DMed ${dmCount}), credited +10min attendance each. Fresh Join VC announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(requiredTier)} — tracking is live again.` });
       }
 
@@ -4505,6 +4538,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const newHost = interaction.options.getUser('member');
         activeStream.hostId = newHost.id;
+        _streamSave();
         return interaction.reply({ content: `✅ Host for the active stream in <#${activeStream.vcId}> set to <@${newHost.id}>.`, ephemeral: true });
       }
 
@@ -4528,6 +4562,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const ended = activeStream;
         activeStream = null;
+        _streamSave();
 
         // Best-effort: if the message still exists, edit it to show cancelled.
         const ch = interaction.guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
@@ -6209,6 +6244,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         activeStream.clickedUserIds.add(member.id);
         _streamRecordJoin(member.id);
+        _streamSave();
 
         const updatedEmbed = _streamEmbed({
           hostId: activeStream.hostId,
@@ -6238,6 +6274,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const hostId = activeStream.hostId;
         activeStream = null;
+        _streamSave();
         const cancelledEmbed = EmbedBuilder.from(interaction.message.embeds[0])
           .setColor(0x6b7280)
           .setTitle('🛑 Stream Cancelled')
@@ -6277,6 +6314,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const finishedEntry = _streamFinalizeAndLog(activeStream);
         activeStream = null;
+        _streamSave();
         await interaction.update({ embeds: [endedEmbed], components: [disabledRow] });
 
         // Auto-post this stream's history summary — same format as
@@ -6813,6 +6851,7 @@ client.on(Events.InteractionCreate, async interaction => {
           }
         }
         activeStream = null;
+        _streamSave();
 
         // Now post the new stream announcement.
         const newVc = interaction.guild.channels.cache.get(newVcId);
@@ -6835,6 +6874,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         activeStream = { vcId: newVc.id, vcName: newVc.name, messageId: newMsg.id, hostId: interaction.user.id, startedAt: new Date(), requiredTier: forceTier, clickedUserIds: new Set(), vcTimes: new Map() };
+        _streamSave();
         return interaction.editReply({ content: `✅ Old stream cancelled. New stream announcement posted in <#${STREAM_ANNOUNCE_CH_ID}> — ${_streamAllowedTiersText(forceTier)}, tracking joins for <#${newVc.id}>.`, components: [] });
       }
     }
@@ -7536,6 +7576,27 @@ client.once(Events.ClientReady, () => {
     } else if (saved) {
       _vcSave(); // expired — clear file
     }
+
+    // Restore the active stream from file (same Railway-restart problem as
+    // the VC countdown above) — but only if the announcement message still
+    // shows the live "Join VC" state. If someone already closed it manually
+    // (or End Stream somehow got through before the restart), trust that
+    // instead of resurrecting a stream that's actually already over.
+    (async () => {
+      const savedStream = _streamLoad();
+      if (!savedStream) return;
+      try {
+        const announceCh = guild.channels.cache.get(STREAM_ANNOUNCE_CH_ID);
+        const msg = announceCh ? await announceCh.messages.fetch(savedStream.messageId).catch(() => null) : null;
+        const stillLive = msg?.components?.[0]?.components?.some(c => c.customId === 'stream_join_click');
+        if (stillLive) {
+          activeStream = savedStream;
+          console.log(`Active stream restored: ${savedStream.vcName}, host ${savedStream.hostId}`);
+        } else {
+          _streamSave(); // message was already closed out — clear the stale file instead of resurrecting it
+        }
+      } catch (e) { console.warn('Stream restore check failed:', e.message); }
+    })();
   }
 
   // Refresh calendar cache on startup so data is always current after each Railway deploy
@@ -7688,6 +7749,7 @@ function _mlEmbed(color, title, fields, user) {
 client.on(Events.MessageDelete, msg => {
   if (activeStream && msg.id === activeStream.messageId) {
     activeStream = null;
+    _streamSave();
   }
 });
 
@@ -7946,6 +8008,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     if (rec && rec.joinedAt) {
       rec.totalMs += Date.now() - rec.joinedAt;
       rec.joinedAt = null;
+      _streamSave();
     }
   }
 
@@ -7956,6 +8019,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     const rec = activeStream.vcTimes.get(member.id) || { joinedAt: null, totalMs: 0 };
     rec.joinedAt = Date.now();
     activeStream.vcTimes.set(member.id, rec);
+    _streamSave();
     return;
   }
 
@@ -7972,6 +8036,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   const rec = activeStream.vcTimes.get(member.id) || { joinedAt: null, totalMs: 0 };
   rec.joinedAt = Date.now();
   activeStream.vcTimes.set(member.id, rec);
+  _streamSave();
 });
 
 // ── Daily opening-range poll scheduler ──
