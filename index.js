@@ -6916,10 +6916,17 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     // ── V4 Signals: Setup Webhook modal submit — saves the URL server-side
-    // (multiple URLs per user supported), DMs confirmation. Eligibility was
-    // already checked before the modal was shown (v4access_webhook button). ──
+    // (multiple URLs per user supported), DMs confirmation. The button click
+    // that opens this modal already checks V4Signal, but re-checking here too
+    // instead of trusting that prior check closes the gap where a role lost
+    // in the window between click and submit (or any future client-side
+    // bypass of the button gate) would otherwise still get a webhook saved. ──
     if (interaction.isModalSubmit() && interaction.customId === 'v4access_webhook_modal') {
       await interaction.deferReply({ ephemeral: true });
+
+      if (!interaction.member.roles.cache.has(V4SIGNAL_ROLE_ID)) {
+        return interaction.editReply({ content: 'You need V4 Signals access first — click **Request V4 Signals Access** above.' });
+      }
 
       const webhookUrl = interaction.fields.getTextInputValue('v4wh_url').trim();
 
