@@ -3491,8 +3491,8 @@ async function postV4AccessButtons(channel) {
 }
 
 const V4_ACCESS_MSG_ID = '1554803144184037488'; // the live "V4 Signals — Access" message; STOUP buttons are added to it in place, not a new message
-const EMIL_USER_ID = '1218191041178505257'; // owns the TV account the STOUP indicator is published under, grants invite-only access manually
-const STOUP_INDI_URL = 'https://www.tradingview.com/script/cfNGRSEU-STDV-Fib-Active-Anchor/'; // invite-only STOUP indicator, published under Emil's TV account
+const STOUP_PROVIDER_USER_ID = '709603102256529469'; // owns the TV account the STOUP indicator is published under, grants invite-only access manually — Mark, as of the switch from Emil
+const STOUP_INDI_URL = 'https://www.tradingview.com/script/cfNGRSEU-STDV-Fib-Active-Anchor/'; // invite-only STOUP indicator, published under the provider's TV account
 
 // Replaces the existing message's components entirely with the current
 // 2-row layout (V4 row + STOUP row with both Fib Settings and Indi
@@ -5808,15 +5808,15 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
 
-      // ── STOUP Indicator: Founder/Emil clicks Granted — invite-only access
+      // ── STOUP Indicator: Founder/provider clicks Granted — invite-only access
       // was added manually on TradingView's side, this just DMs the user
       // the script link and closes the thread. ──
       if (customId.startsWith('stoupindi_granted_')) {
         await interaction.deferReply();
 
         const isFounder = interaction.member.roles.cache.has(FOUNDER_ROLE_ID);
-        const isEmil = interaction.user.id === EMIL_USER_ID;
-        if (!isFounder && !isEmil) return interaction.editReply({ content: 'Only Founder or Emil can grant this.' });
+        const isProvider = interaction.user.id === STOUP_PROVIDER_USER_ID;
+        if (!isFounder && !isProvider) return interaction.editReply({ content: 'Only Founder or Mark can grant this.' });
 
         const requesterId = customId.replace('stoupindi_granted_', '');
         const targetMember = await interaction.guild.members.fetch(requesterId).catch(() => null);
@@ -7061,7 +7061,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     // ── STOUP Indicator: TV username modal submit — creates the thread,
-    // tags Founder role + Emil specifically (he owns the TV account the
+    // tags Founder role + the indicator provider specifically (owns the TV account the
     // script is published under), posts the username, shows Granted. ──
     if (interaction.isModalSubmit() && interaction.customId === 'stoupindi_tv_modal') {
       await interaction.deferReply({ ephemeral: true });
@@ -7089,7 +7089,7 @@ client.on(Events.InteractionCreate, async interaction => {
       });
 
       await thread.members.add(interaction.user.id);
-      await thread.members.add(EMIL_USER_ID).catch(() => {});
+      await thread.members.add(STOUP_PROVIDER_USER_ID).catch(() => {});
       const allMembers = await guild.members.fetch();
       for (const m of allMembers.values()) {
         if (m.user.bot) continue;
@@ -7103,7 +7103,7 @@ client.on(Events.InteractionCreate, async interaction => {
         .setTitle('STOUP Indicator — Access Request')
         .setDescription(
           `**TradingView username:** ${tvUsername}\n\n` +
-          `<@${EMIL_USER_ID}> — add this username to the invite-only STOUP indicator on TradingView, ` +
+          `<@${STOUP_PROVIDER_USER_ID}> — add this username to the invite-only STOUP indicator on TradingView, ` +
           `then click **Granted** below to notify the requester and close this thread.`
         )
         .setFooter({ text: 'The Smart Money Paradigm  ·  STOUP Indicator' });
@@ -7113,7 +7113,7 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       await thread.send({
-        content: `<@${interaction.user.id}> <@&${FOUNDER_ROLE_ID}> <@${EMIL_USER_ID}>`,
+        content: `<@${interaction.user.id}> <@&${FOUNDER_ROLE_ID}> <@${STOUP_PROVIDER_USER_ID}>`,
         embeds: [infoEmbed],
         components: [grantedRow],
       });
