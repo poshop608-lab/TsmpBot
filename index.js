@@ -1875,15 +1875,20 @@ async function _postSignal(guild, user, { level, note, extraFields, asset, direc
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|L`).setLabel('L').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|BE`).setLabel('BE').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|criteria_not_met`).setLabel('Criteria Not Met').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`signal_outcome|${signalId}|invalidated`).setLabel('Invalidated').setStyle(ButtonStyle.Secondary),
   ];
-  // Alert ("price is close to the level") only makes sense for the Level
-  // path — a Buy/Sell Signal-path post is already a live directional call
-  // at current price, there's no separate level to wait for it to approach.
+  const rows = [new ActionRowBuilder().addComponents(...rowButtons)];
+  // Alert ("price is close to the level") and Currently Playing (level got
+  // tapped, trade is live) only make sense for the Level path — a Buy/Sell
+  // Signal-path post is already a live directional call at current price,
+  // there's no separate level to wait for it to approach or to tap.
   // direction is only ever set on the Signal path, so its absence marks Level.
   if (!direction) {
-    rowButtons.push(new ButtonBuilder().setCustomId(`signal_alert|${signalId}`).setLabel('Alert').setEmoji('🔔').setStyle(ButtonStyle.Primary));
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`signal_alert|${signalId}`).setLabel('Alert').setEmoji('🔔').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`signal_playing|${signalId}`).setLabel('Currently Playing').setEmoji('▶️').setStyle(ButtonStyle.Primary),
+    ));
   }
-  const rows = [new ActionRowBuilder().addComponents(...rowButtons)];
   if (addStopTpButton) {
     rows.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`dropsignal_addstoptp_${signalId}`).setLabel('Add Stop & TP').setStyle(ButtonStyle.Primary),
@@ -6778,7 +6783,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferUpdate();
 
-        const outcomeLabel = { L: '❌ Loss', BE: '➖ Breakeven', criteria_not_met: '⚠️ Criteria Not Met' }[outcome] || outcome;
+        const outcomeLabel = { L: '❌ Loss', BE: '➖ Breakeven', criteria_not_met: '⚠️ Criteria Not Met', invalidated: '🚫 Invalidated' }[outcome] || outcome;
         const oldEmbed = interaction.message.embeds[0];
         const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
           (oldEmbed.fields || []).map(f => f.name === 'Outcome' ? { name: 'Outcome', value: outcomeLabel, inline: true } : f)
@@ -6816,6 +6821,37 @@ client.on(Events.InteractionCreate, async interaction => {
           ),
         );
         return interaction.showModal(modal);
+      }
+
+      // ── Currently Playing button — the level got tapped and the trade is
+      // now live. No modal (unlike Alert): just flips status and relays,
+      // same poster-only restriction as the outcome buttons since it's a
+      // state change on the signal, not a passive nudge anyone can send. ──
+      if (customId.startsWith('signal_playing|')) {
+        const [, signalId] = customId.split('|');
+        const posterId = signalId.split('_').pop();
+        if (interaction.user.id !== posterId) {
+          return interaction.reply({ content: 'Only the person who dropped this signal can update it.', ephemeral: true });
+        }
+
+        await interaction.deferUpdate();
+
+        const oldEmbed = interaction.message.embeds[0];
+        const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(
+          (oldEmbed.fields || []).map(f => f.name === 'Outcome' ? { name: 'Outcome', value: '▶️ Currently Playing', inline: true } : f)
+        );
+        await interaction.message.edit({ embeds: [updatedEmbed] }).catch(() => {});
+
+        try {
+          await fetch('https://smp-join.poshop608.workers.dev/bot/signals/status', {
+            method: 'POST',
+            headers: { 'Authorization': `Bot ${process.env.TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: signalId, status: 'playing' }),
+          });
+        } catch (e) {
+          console.error('[signal playing] web update failed:', e.message);
+        }
+        return;
       }
 
       // ── Force-cancel a stuck stream from /host-stream's conflict prompt,
